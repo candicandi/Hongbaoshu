@@ -5,6 +5,8 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+import java.util.Properties
+
 android {
     namespace = "com.xuyutech.hongbaoshu"
     compileSdk = 36
@@ -23,17 +25,17 @@ android {
         create("release") {
             val keystorePropertiesFile = rootProject.file("keystore.properties")
             if (keystorePropertiesFile.exists()) {
-                val properties = java.util.Properties()
+                val properties = Properties()
                 properties.load(keystorePropertiesFile.inputStream())
                 
                 storeFile = if (properties.containsKey("storeFile")) {
-                   file(properties["storeFile"] as String)
+                   file(properties.getProperty("storeFile"))
                 } else {
                    file("release.jks")
                 }
-                storePassword = properties["storePassword"] as String
-                keyAlias = properties["keyAlias"] as String
-                keyPassword = properties["keyPassword"] as String
+                storePassword = properties.getProperty("storePassword")
+                keyAlias = properties.getProperty("keyAlias")
+                keyPassword = properties.getProperty("keyPassword")
             } else {
                 // Fallback for CI/CD or if file missing (won't be able to sign release)
                 // You can add logic here or leave empty/dummy to avoid build error but skip signing

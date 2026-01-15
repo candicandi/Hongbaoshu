@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -73,7 +74,7 @@ fun SwipeablePageContainer(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFFAF5EE))  // 底色，模拟纸张
+            .background(MaterialTheme.colorScheme.background)  // 使用主题背景色
             .pointerInput(pageIndex, canGoPrev, canGoNext, onCenterTap, onTopDoubleTap) {
                 detectTapGestures(
                     onDoubleTap = { offset ->
@@ -185,7 +186,7 @@ fun SwipeablePageContainer(
                     elevation = if (offset != 0f) 4.dp else 0.dp,
                     clip = false
                 )
-                .background(Color(0xFFFAF5EE))
+                .background(MaterialTheme.colorScheme.background)  // 使用主题背景色
         ) {
             content(pageIndex)
         }

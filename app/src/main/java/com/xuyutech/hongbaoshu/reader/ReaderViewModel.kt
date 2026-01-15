@@ -342,7 +342,8 @@ class ReaderViewModel(
                     book = bookResult.book,
                     missingAudio = bookResult.missingSentenceAudioIds,
                     currentChapterIndex = cappedChapterIndex,
-                    pageIndex = saved.pageIndex  // 由 UI 层校验
+                    pageIndex = saved.pageIndex,  // 由 UI 层校验
+                    isNightMode = saved.isNightMode
                 )
                 restoreAudioState(saved)
             }.onFailure { e ->
@@ -449,6 +450,16 @@ class ReaderViewModel(
         }
         // 如果开启，由 UI 层触发播放第一句
     }
+
+    /**
+     * 切换夜间模式
+     */
+    fun toggleNightMode() {
+        val current = _state.value ?: return
+        val newMode = !current.isNightMode
+        _state.value = current.copy(isNightMode = newMode)
+        persistState()
+    }
     
     /**
      * 暂停朗读（保持开关状态，用于返回封面时）
@@ -489,7 +500,8 @@ class ReaderViewModel(
                     narrationPosition = audioManager.state.value.narrationPosition,
                     bgmIndex = audioManager.state.value.bgmIndex,
                     bgmEnabled = audioManager.state.value.bgmEnabled,
-                    bgmVolume = audioManager.state.value.bgmVolume
+                    bgmVolume = audioManager.state.value.bgmVolume,
+                    isNightMode = current.isNightMode
                 )
             )
         }

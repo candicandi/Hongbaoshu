@@ -89,9 +89,14 @@ fun ReaderScreen(
         }
     }
 
-    BoxWithConstraints(
-        modifier = Modifier.fillMaxSize()
-    ) {
+    com.xuyutech.hongbaoshu.ui.theme.HongbaoshuTheme(darkTheme = state.value.isNightMode) {
+        androidx.compose.material3.Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            BoxWithConstraints(
+                modifier = Modifier.fillMaxSize()
+            ) {
         val screenHeightPx = with(density) { maxHeight.toPx().toInt() }
         val screenWidthPx = with(density) { maxWidth.toPx().toInt() }
         // 页面正文区域上下各 10% 留白，中间 80% 填充文字
@@ -106,7 +111,8 @@ fun ReaderScreen(
         val textStyle = TextStyle(
             fontSize = fontSizeSp,
             fontWeight = FontWeight.Normal,
-            lineHeight = lineHeightSp
+            lineHeight = lineHeightSp,
+            color = MaterialTheme.colorScheme.onBackground
         )
         val annotationFontSizeSp = fontSizeSp * 0.85f
         val annotationStyle = TextStyle(
@@ -136,7 +142,8 @@ fun ReaderScreen(
             val tStyle = TextStyle(
                 fontSize = fSizeSp,
                 fontWeight = FontWeight.Normal,
-                lineHeight = lHeightSp
+                lineHeight = lHeightSp,
+                color = Color.Black  // PageConfig is used for measurement, not rendering
             )
             val aFontSizeSp = fSizeSp * 0.85f
             val aStyle = TextStyle(
@@ -263,9 +270,7 @@ fun ReaderScreen(
         }
 
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFFFAF5EE))
+            modifier = Modifier.fillMaxSize()
         ) {
             when {
                 state.value.isLoading -> {
@@ -385,7 +390,9 @@ fun ReaderScreen(
                     },
                     fontSizeLevel = state.value.fontSizeLevel,
                     onFontSizeChange = { level -> viewModel.setFontSize(level) },
-                    onDismiss = { showMenu.value = false }
+                    onDismiss = { showMenu.value = false },
+                    onToggleNightMode = { viewModel.toggleNightMode() },
+                    isNightMode = state.value.isNightMode
                 )
             }
 
@@ -408,6 +415,8 @@ fun ReaderScreen(
             )
         }
     }
+    }
+}
 }
 
 /**
@@ -464,7 +473,9 @@ private fun MenuPanel(
     onNarrationToggle: (Boolean) -> Unit,
     fontSizeLevel: Int,
     onFontSizeChange: (Int) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onToggleNightMode: () -> Unit,
+    isNightMode: Boolean
 ) {
     Column(
         modifier = Modifier
@@ -499,7 +510,7 @@ private fun MenuPanel(
             )
         }
 
-        // Quick Actions Row (TOC)
+        // Quick Actions Row (TOC + Night Mode)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -671,6 +682,30 @@ private fun MenuPanel(
                     )
                 }
 
+                // Night Mode Row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("夜间模式", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "启用深色主题",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = isNightMode,
+                        onCheckedChange = { onToggleNightMode() }
+                    )
+                }
+                
+                HorizontalDivider(modifier = Modifier.padding(bottom = 12.dp))
+
                 // Font Size Slider
                 var sliderValue by remember(fontSizeLevel) { androidx.compose.runtime.mutableFloatStateOf(fontSizeLevel.toFloat()) }
                 Row(
@@ -788,7 +823,6 @@ private fun PageContent(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFFAF5EE))
             .padding(horizontal = 20.dp)
     ) {
         // 正文区域布局：上部 10% 留白，中间 80% 容器，3% 缓冲区，底部 7% 留白
@@ -835,7 +869,7 @@ private fun PageContent(
         Text(
             text = "${globalPageInfo.first} / ${globalPageInfo.second}",
             style = MaterialTheme.typography.labelSmall,
-            color = Color.Gray,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
