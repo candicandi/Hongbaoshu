@@ -1,0 +1,9 @@
+{
+  "recommendations": [
+    "fwcd.kotlin",
+    "vscjava.vscode-gradle",
+    "redhat.java",
+    "ms-vscode.android-codelens",
+    "ms-vscode.cpptools"
+  ]
+}
