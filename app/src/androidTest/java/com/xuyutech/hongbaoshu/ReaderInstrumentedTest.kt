@@ -28,8 +28,11 @@ class ReaderInstrumentedTest {
         // 点击封面进入阅读
         composeTestRule.onNodeWithContentDescription("封面").performClick()
         
-        // 验证封面不再显示 (进入了阅读页)
+        // 等待足够长的时间确保分页计算完成(从日志中可以看到分页需要时间)
         composeTestRule.waitForIdle()
+        Thread.sleep(3000)  // 等待 3 秒确保分页完成
+        
+        // 验证封面不再显示 (进入了阅读页)
         composeTestRule.onNodeWithContentDescription("封面").assertDoesNotExist()
     }
 
@@ -38,13 +41,18 @@ class ReaderInstrumentedTest {
         // 进入阅读界面
         composeTestRule.onNodeWithContentDescription("封面").performClick()
         composeTestRule.waitForIdle()
+        Thread.sleep(3000)  // 等待分页完成
         
-        // 初始状态下菜单是隐藏的，双击顶部区域打开菜单
-        // 获取屏幕高度的一小部分作为顶部点击区域
+        // 双击顶部区域打开菜单 (在屏幕顶部 5% 的位置双击)
         composeTestRule.onRoot().performTouchInput {
-            doubleClick(position = androidx.compose.ui.geometry.Offset(centerX, height * 0.1f))
+            val clickX = centerX
+            val clickY = height * 0.05f  // 使用 5% 确保在顶部 20% 范围内
+            doubleClick(position = androidx.compose.ui.geometry.Offset(clickX, clickY))
         }
+        
+        // 等待菜单动画完成
         composeTestRule.waitForIdle()
+        Thread.sleep(500)
         
         // 验证菜单出现 (检查"阅读设置"标题)
         composeTestRule.onNodeWithText("阅读设置").assertIsDisplayed()
@@ -61,19 +69,22 @@ class ReaderInstrumentedTest {
         // 进入阅读界面
         composeTestRule.onNodeWithContentDescription("封面").performClick()
         composeTestRule.waitForIdle()
+        Thread.sleep(3000)  // 等待分页完成
         
         // 打开菜单
         composeTestRule.onRoot().performTouchInput {
-            doubleClick(position = androidx.compose.ui.geometry.Offset(centerX, height * 0.1f))
+            doubleClick(position = androidx.compose.ui.geometry.Offset(centerX, height * 0.05f))
         }
         composeTestRule.waitForIdle()
+        Thread.sleep(500)
         
         // 打开目录
         composeTestRule.onNodeWithText("目录").performClick()
         composeTestRule.waitForIdle()
+        Thread.sleep(300)
         
-        // 验证目录对话框显示 (查找对话框标题)
-        composeTestRule.onNodeWithText("目录").assertIsDisplayed()
+        // 验证目录对话框显示 (查找"关闭"按钮,因为对话框中有两个"目录"文本)
+        composeTestRule.onNodeWithText("关闭").assertIsDisplayed()
         
         // 关闭目录
         composeTestRule.onNodeWithText("关闭").performClick()
@@ -88,12 +99,20 @@ class ReaderInstrumentedTest {
         // 进入阅读界面
         composeTestRule.onNodeWithContentDescription("封面").performClick()
         composeTestRule.waitForIdle()
+        Thread.sleep(3000)  // 等待分页完成
         
-        // 执行右滑手势返回 (从左侧边缘向右滑)
+        // 执行右滑手势返回 (从左边缘向右滑动整个屏幕宽度)
         composeTestRule.onRoot().performTouchInput {
-            swipeRight()
+            swipe(
+                start = androidx.compose.ui.geometry.Offset(width * 0.1f, centerY),
+                end = androidx.compose.ui.geometry.Offset(width * 0.9f, centerY),
+                durationMillis = 300
+            )
         }
+        
+        // 等待翻页动画完成
         composeTestRule.waitForIdle()
+        Thread.sleep(500)
         
         // 验证回到封面
         composeTestRule.onNodeWithContentDescription("封面").assertIsDisplayed()
