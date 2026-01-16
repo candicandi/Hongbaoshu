@@ -16,6 +16,7 @@ local.properties
 keystore.properties
 *.keystore
 *.jks
+action_test
 
 # Security: Ignore Google Cloud Service Account Keys
 hongbaoshu-*.json

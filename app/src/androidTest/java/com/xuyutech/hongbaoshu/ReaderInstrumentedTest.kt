@@ -1,10 +1,7 @@
 package com.xuyutech.hongbaoshu
 
-import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
 import org.junit.Test
@@ -23,7 +20,6 @@ class ReaderInstrumentedTest {
     @Test
     fun coverScreen_isDisplayed() {
         // 验证封面屏幕显示
-        // UI 中仅有一张封面图，没有"红宝书"或"进入阅读"的文本元素
         composeTestRule.onNodeWithContentDescription("封面").assertIsDisplayed()
     }
 
@@ -32,32 +28,32 @@ class ReaderInstrumentedTest {
         // 点击封面进入阅读
         composeTestRule.onNodeWithContentDescription("封面").performClick()
         
-        // 验证阅读界面显示
+        // 验证封面不再显示 (进入了阅读页)
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithText("返回").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription("封面").assertDoesNotExist()
     }
 
     @Test
-    fun readerScreen_showsNavigationControls() {
+    fun readerScreen_showsMenuAndBgmControls() {
         // 进入阅读界面
         composeTestRule.onNodeWithContentDescription("封面").performClick()
         composeTestRule.waitForIdle()
         
-        // 验证导航控件存在
-        composeTestRule.onNodeWithText("上一页").assertIsDisplayed()
-        composeTestRule.onNodeWithText("下一页").assertIsDisplayed()
+        // 初始状态下菜单是隐藏的，双击顶部区域打开菜单
+        // 获取屏幕高度的一小部分作为顶部点击区域
+        composeTestRule.onRoot().performTouchInput {
+            doubleClick(position = androidx.compose.ui.geometry.Offset(centerX, height * 0.1f))
+        }
+        composeTestRule.waitForIdle()
+        
+        // 验证菜单出现 (检查"阅读设置"标题)
+        composeTestRule.onNodeWithText("阅读设置").assertIsDisplayed()
+        
+        // 验证目录按钮存在
         composeTestRule.onNodeWithText("目录").assertIsDisplayed()
-    }
-
-    @Test
-    fun readerScreen_showsBgmControls() {
-        // 进入阅读界面
-        composeTestRule.onNodeWithContentDescription("封面").performClick()
-        composeTestRule.waitForIdle()
         
-        // 验证 BGM 控件存在
-        composeTestRule.onNodeWithText("BGM播放").assertIsDisplayed()
-        composeTestRule.onNodeWithText("下一首").assertIsDisplayed()
+        // 验证 BGM 控件存在 (在菜单中)
+        composeTestRule.onNodeWithText("听书 & 音效").assertIsDisplayed()
     }
 
     @Test
@@ -66,26 +62,37 @@ class ReaderInstrumentedTest {
         composeTestRule.onNodeWithContentDescription("封面").performClick()
         composeTestRule.waitForIdle()
         
+        // 打开菜单
+        composeTestRule.onRoot().performTouchInput {
+            doubleClick(position = androidx.compose.ui.geometry.Offset(centerX, height * 0.1f))
+        }
+        composeTestRule.waitForIdle()
+        
         // 打开目录
         composeTestRule.onNodeWithText("目录").performClick()
         composeTestRule.waitForIdle()
         
-        // 验证目录对话框显示
-        composeTestRule.onNodeWithText("关闭").assertIsDisplayed()
+        // 验证目录对话框显示 (查找对话框标题)
+        composeTestRule.onNodeWithText("目录").assertIsDisplayed()
         
         // 关闭目录
         composeTestRule.onNodeWithText("关闭").performClick()
         composeTestRule.waitForIdle()
+        
+        // 验证目录对话框消失
+        composeTestRule.onNodeWithText("关闭").assertDoesNotExist()
     }
 
     @Test
-    fun backButton_navigatesToCover() {
+    fun backGesture_navigatesToCover() {
         // 进入阅读界面
         composeTestRule.onNodeWithContentDescription("封面").performClick()
         composeTestRule.waitForIdle()
         
-        // 点击返回
-        composeTestRule.onNodeWithText("返回").performClick()
+        // 执行右滑手势返回 (从左侧边缘向右滑)
+        composeTestRule.onRoot().performTouchInput {
+            swipeRight()
+        }
         composeTestRule.waitForIdle()
         
         // 验证回到封面
