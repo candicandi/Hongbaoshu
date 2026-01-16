@@ -69,8 +69,13 @@ jobs:
           disable-animations: true
           script: ./gradlew connectedDebugAndroidTest
 
-  # 3. Firebase Test Lab (Real Device - Samsung)
-  # Requires 'FIREBASE_SERVICE_ACCOUNT' secret in GitHub Repo
+      - name: Upload Emulator Test Reports
+        if: always() # Upload even if tests fail
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-test-report-api-${{ matrix.api-level }}
+          path: app/build/reports/androidTests/connected/
+
   # 3. Firebase Test Lab (Real Device - Samsung)
   # Requires 'FIREBASE_SERVICE_ACCOUNT' secret in GitHub Repo
   firebase_test:
@@ -112,8 +117,17 @@ jobs:
           # Note: 'gcloud firebase test android models list' to see available models
           # 'sm-g998u1' is Galaxy S21 Ultra 5G (Physical) - Subject to availability in Free Tier
           # If high demand, it might queue. 'Medium' latency.
+          mkdir -p firebase-results
           gcloud firebase test android run \
             --app app/build/outputs/apk/debug/app-debug.apk \
             --test app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk \
             --device model=sm-g998u1,version=31,locale=zh_CN,orientation=portrait \
-            --use-orchestrator
+            --use-orchestrator \
+            --results-dir=firebase-results/
+      
+      - name: Upload Firebase Test Artifacts
+        if: always() && env.FIREBASE_KEY != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: firebase-test-results
+          path: firebase-results/
