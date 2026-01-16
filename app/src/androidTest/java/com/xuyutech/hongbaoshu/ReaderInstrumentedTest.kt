@@ -3,6 +3,7 @@ package com.xuyutech.hongbaoshu
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
@@ -22,14 +23,14 @@ class ReaderInstrumentedTest {
     @Test
     fun coverScreen_isDisplayed() {
         // 验证封面屏幕显示
-        composeTestRule.onNodeWithText("红宝书").assertIsDisplayed()
-        composeTestRule.onNodeWithText("进入阅读").assertIsDisplayed()
+        // UI 中仅有一张封面图，没有"红宝书"或"进入阅读"的文本元素
+        composeTestRule.onNodeWithContentDescription("封面").assertIsDisplayed()
     }
 
     @Test
     fun navigateToReader_fromCover() {
-        // 点击进入阅读
-        composeTestRule.onNodeWithText("进入阅读").performClick()
+        // 点击封面进入阅读
+        composeTestRule.onNodeWithContentDescription("封面").performClick()
         
         // 验证阅读界面显示
         composeTestRule.waitForIdle()
@@ -39,7 +40,7 @@ class ReaderInstrumentedTest {
     @Test
     fun readerScreen_showsNavigationControls() {
         // 进入阅读界面
-        composeTestRule.onNodeWithText("进入阅读").performClick()
+        composeTestRule.onNodeWithContentDescription("封面").performClick()
         composeTestRule.waitForIdle()
         
         // 验证导航控件存在
@@ -51,7 +52,7 @@ class ReaderInstrumentedTest {
     @Test
     fun readerScreen_showsBgmControls() {
         // 进入阅读界面
-        composeTestRule.onNodeWithText("进入阅读").performClick()
+        composeTestRule.onNodeWithContentDescription("封面").performClick()
         composeTestRule.waitForIdle()
         
         // 验证 BGM 控件存在
@@ -62,7 +63,7 @@ class ReaderInstrumentedTest {
     @Test
     fun tocDialog_opensAndCloses() {
         // 进入阅读界面
-        composeTestRule.onNodeWithText("进入阅读").performClick()
+        composeTestRule.onNodeWithContentDescription("封面").performClick()
         composeTestRule.waitForIdle()
         
         // 打开目录
@@ -80,7 +81,7 @@ class ReaderInstrumentedTest {
     @Test
     fun backButton_navigatesToCover() {
         // 进入阅读界面
-        composeTestRule.onNodeWithText("进入阅读").performClick()
+        composeTestRule.onNodeWithContentDescription("封面").performClick()
         composeTestRule.waitForIdle()
         
         // 点击返回
@@ -88,6 +89,6 @@ class ReaderInstrumentedTest {
         composeTestRule.waitForIdle()
         
         // 验证回到封面
-        composeTestRule.onNodeWithText("红宝书").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription("封面").assertIsDisplayed()
     }
 }
