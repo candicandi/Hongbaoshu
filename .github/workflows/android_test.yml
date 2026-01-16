@@ -77,6 +77,8 @@ jobs:
     name: Samsung Real Device (FTL)
     needs: unit_test 
     runs-on: ubuntu-latest
+    env:
+      FIREBASE_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -95,17 +97,17 @@ jobs:
         run: ./gradlew assembleDebug assembleDebugAndroidTest
 
       - name: Auth with Google Cloud
-        if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+        if: env.FIREBASE_KEY != ''
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
 
       - name: Set up Cloud SDK
-        if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+        if: env.FIREBASE_KEY != ''
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Run Tests on Samsung Galaxy S21 Ultra (Virtual/Physical)
-        if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+        if: env.FIREBASE_KEY != ''
         run: |
           # Note: 'gcloud firebase test android models list' to see available models
           # 'sm-g998u1' is Galaxy S21 Ultra 5G (Physical) - Subject to availability in Free Tier
