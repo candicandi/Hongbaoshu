@@ -71,12 +71,12 @@ jobs:
 
   # 3. Firebase Test Lab (Real Device - Samsung)
   # Requires 'FIREBASE_SERVICE_ACCOUNT' secret in GitHub Repo
+  # 3. Firebase Test Lab (Real Device - Samsung)
+  # Requires 'FIREBASE_SERVICE_ACCOUNT' secret in GitHub Repo
   firebase_test:
     name: Samsung Real Device (FTL)
     needs: unit_test 
     runs-on: ubuntu-latest
-    # Only run if secret is present to avoid failure on forks/unconfigured repos
-    if: "${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -92,18 +92,20 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build APK for Testing
-        # Build both App APK and Test APK
         run: ./gradlew assembleDebug assembleDebugAndroidTest
 
       - name: Auth with Google Cloud
+        if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
 
       - name: Set up Cloud SDK
+        if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Run Tests on Samsung Galaxy S21 Ultra (Virtual/Physical)
+        if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
         run: |
           # Note: 'gcloud firebase test android models list' to see available models
           # 'sm-g998u1' is Galaxy S21 Ultra 5G (Physical) - Subject to availability in Free Tier
