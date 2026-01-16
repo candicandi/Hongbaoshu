@@ -1,0 +1,115 @@
+name: Android Automated Testing
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  # 1. Unit Tests (Fast, verify logic)
+  unit_test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Run Unit Tests
+        run: ./gradlew testDebugUnitTest
+
+  # 2. Emulator Matrix Tests (Verify compatibility on different Android Versions)
+  emulator_test:
+    name: API ${{ matrix.api-level }} Test
+    needs: unit_test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [29, 31, 34] # Android 10, 12, 14
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run Instrumentation Tests (Emulator)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: ./gradlew connectedDebugAndroidTest
+
+  # 3. Firebase Test Lab (Real Device - Samsung)
+  # Requires 'FIREBASE_SERVICE_ACCOUNT' secret in GitHub Repo
+  firebase_test:
+    name: Samsung Real Device (FTL)
+    needs: unit_test 
+    runs-on: ubuntu-latest
+    # Only run if secret is present to avoid failure on forks/unconfigured repos
+    if: "${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build APK for Testing
+        # Build both App APK and Test APK
+        run: ./gradlew assembleDebug assembleDebugAndroidTest
+
+      - name: Auth with Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run Tests on Samsung Galaxy S21 Ultra (Virtual/Physical)
+        run: |
+          # Note: 'gcloud firebase test android models list' to see available models
+          # 'sm-g998u1' is Galaxy S21 Ultra 5G (Physical) - Subject to availability in Free Tier
+          # If high demand, it might queue. 'Medium' latency.
+          gcloud firebase test android run \
+            --app app/build/outputs/apk/debug/app-debug.apk \
+            --test app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk \
+            --device model=sm-g998u1,version=31,locale=zh_CN,orientation=portrait \
+            --use-orchestrator
