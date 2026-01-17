@@ -261,7 +261,7 @@ fun ReaderScreen(
         val currentNarrationId = audioState.value.narrationSentenceId
         
         // 处理翻页后播放第一句（自动翻页或手动翻页都会触发）
-        LaunchedEffect(state.value.needPlayFirstSentence) {
+        LaunchedEffect(state.value.needPlayFirstSentence, currentPageSentences) {
             if (state.value.needPlayFirstSentence && currentPageSentences.isNotEmpty()) {
                 viewModel.clearPlayFirstSentence()
                 viewModel.resetNarrationState()

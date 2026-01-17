@@ -15,6 +15,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.xuyutech.hongbaoshu.data.ContentLoader
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 
 @OptIn(UnstableApi::class)
 class AudioManagerImpl(
@@ -66,11 +67,13 @@ class AudioManagerImpl(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) {
                     val completedId = _state.value.narrationSentenceId
-                    _state.value = _state.value.copy(
-                        narrationSentenceId = null,
-                        narrationPosition = 0L,
-                        narrationPlaying = false
-                    )
+                    _state.update { current ->
+                        current.copy(
+                            narrationSentenceId = null,
+                            narrationPosition = 0L,
+                            narrationPlaying = false
+                        )
+                    }
                     // 通知回调播放下一句（在后台线程执行，不依赖 UI）
                     if (completedId != null) {
                         narrationCompletionCallback?.onSentenceCompleted(completedId)
@@ -78,19 +81,23 @@ class AudioManagerImpl(
                 }
             }
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                _state.value = _state.value.copy(
-                    narrationPosition = narrationPlayer.currentPosition,
-                    narrationPlaying = isPlaying
-                )
+                _state.update { current ->
+                    current.copy(
+                        narrationPosition = narrationPlayer.currentPosition,
+                        narrationPlaying = isPlaying
+                    )
+                }
             }
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 android.util.Log.e("AudioManager", "Player error: ${error.message}")
                 // 播放器出错时重置状态
-                _state.value = _state.value.copy(
-                    narrationSentenceId = null,
-                    narrationPosition = 0L,
-                    narrationPlaying = false
-                )
+                _state.update { current ->
+                    current.copy(
+                        narrationSentenceId = null,
+                        narrationPosition = 0L,
+                        narrationPlaying = false
+                    )
+                }
             }
         }
     }
@@ -146,12 +153,16 @@ class AudioManagerImpl(
             bgmPlayer.prepare()
         }
         bgmPlayer.playWhenReady = true
-        _state.value = _state.value.copy(bgmEnabled = true, bgmIndex = idx)
+        _state.update { current -> 
+            current.copy(bgmEnabled = true, bgmIndex = idx)
+        }
     }
 
     override fun pauseBgm() {
         bgmPlayer.pause()
-        _state.value = _state.value.copy(bgmEnabled = false)
+        _state.update { current -> 
+            current.copy(bgmEnabled = false)
+        }
     }
 
     override fun nextBgm() {
@@ -173,11 +184,13 @@ class AudioManagerImpl(
             narrationPlayer.setMediaItem(MediaItem.fromUri(uri))
             narrationPlayer.prepare()
             narrationPlayer.playWhenReady = true
-            _state.value = _state.value.copy(
-                narrationSentenceId = sentenceId,
-                narrationPosition = 0L,
-                narrationPlaying = true
-            )
+            _state.update { current ->
+                current.copy(
+                    narrationSentenceId = sentenceId,
+                    narrationPosition = 0L,
+                    narrationPlaying = true
+                )
+            }
             return true
         } catch (e: Exception) {
             android.util.Log.e("AudioManager", "Error playing sentence: ${e.message}")
@@ -188,11 +201,13 @@ class AudioManagerImpl(
                 narrationPlayer.setMediaItem(MediaItem.fromUri(uri))
                 narrationPlayer.prepare()
                 narrationPlayer.playWhenReady = true
-                _state.value = _state.value.copy(
-                    narrationSentenceId = sentenceId,
-                    narrationPosition = 0L,
-                    narrationPlaying = true
-                )
+                _state.update { current ->
+                    current.copy(
+                        narrationSentenceId = sentenceId,
+                        narrationPosition = 0L,
+                        narrationPlaying = true
+                    )
+                }
                 return true
             } catch (e2: Exception) {
                 android.util.Log.e("AudioManager", "Retry failed: ${e2.message}")
@@ -203,26 +218,32 @@ class AudioManagerImpl(
 
     override fun pauseSentence() {
         narrationPlayer.pause()
-        _state.value = _state.value.copy(
-            narrationPosition = narrationPlayer.currentPosition,
-            narrationPlaying = false
-        )
+        _state.update { current ->
+            current.copy(
+                narrationPosition = narrationPlayer.currentPosition,
+                narrationPlaying = false
+            )
+        }
     }
 
     override fun resumeSentence() {
         if (_state.value.narrationSentenceId != null) {
             narrationPlayer.playWhenReady = true
-            _state.value = _state.value.copy(narrationPlaying = true)
+            _state.update { current ->
+                current.copy(narrationPlaying = true)
+            }
         }
     }
 
     override fun stopSentence() {
         narrationPlayer.stop()
-        _state.value = _state.value.copy(
-            narrationSentenceId = null,
-            narrationPosition = 0L,
-            narrationPlaying = false
-        )
+        _state.update { current ->
+            current.copy(
+                narrationSentenceId = null,
+                narrationPosition = 0L,
+                narrationPlaying = false
+            )
+        }
     }
 
     override fun playFlip() {
@@ -237,7 +258,9 @@ class AudioManagerImpl(
     override fun seekTo(positionMs: Long) {
         if (_state.value.narrationSentenceId != null && positionMs >= 0) {
             narrationPlayer.seekTo(positionMs)
-            _state.value = _state.value.copy(narrationPosition = positionMs)
+            _state.update { current ->
+                current.copy(narrationPosition = positionMs)
+            }
         }
     }
 
@@ -249,6 +272,8 @@ class AudioManagerImpl(
     override fun setBgmVolume(volume: Float) {
         val safeVolume = volume.coerceIn(0f, 1f)
         bgmPlayer.volume = safeVolume
-        _state.value = _state.value.copy(bgmVolume = safeVolume)
+        _state.update { current ->
+            current.copy(bgmVolume = safeVolume)
+        }
     }
 }

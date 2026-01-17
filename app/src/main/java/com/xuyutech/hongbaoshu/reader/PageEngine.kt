@@ -84,22 +84,10 @@ class PageEngine {
         textMeasurer: TextMeasurer
     ): List<Page> {
         sentenceToPageIndex.clear()
-        paragraphSentenceRanges.clear()
+        // paragraphSentenceRanges 包含字体无关的句子数据，不应清除，避免影响其他线程使用
         
-        // 预处理：为每个段落建立句子到字符范围的映射
-        chapter.paragraphs.forEach { para ->
-            if (para.type == ParagraphType.text && para.sentences.isNotEmpty()) {
-                val ranges = mutableListOf<IntRange>()
-                var offset = 0
-                para.sentences.forEach { sentence ->
-                    val start = offset
-                    val end = offset + sentence.content.length
-                    ranges.add(start until end)
-                    offset = end
-                }
-                paragraphSentenceRanges[para.id] = ranges
-            }
-        }
+        // 确保建立句子范围映射
+        buildSentenceRanges(chapter)
         
         val pages = mutableListOf<Page>()
         var currentSlices = mutableListOf<PageSlice>()

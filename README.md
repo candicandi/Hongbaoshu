@@ -1,4 +1,4 @@
-# Hongbaoshu (Red Treasure Book) - Android 电子书应用
+# Hongbaoshu - Android 电子书应用
 
 > **⚠️ 重要免责声明 / IMPORTANT DISCLAIMER**
 >
