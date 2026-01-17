@@ -24,5 +24,6 @@ data class ReaderState(
     val narrationEnabled: Boolean = false,       // 朗读模式是否开启
     val currentPageSentenceIds: List<String> = emptyList(),  // 当前页的句子 ID 列表
     val lastPlayedSentenceId: String? = null,    // 上一个播放完成的句子 ID（用于查找下一句）
-    val isNightMode: Boolean = false             // 夜间模式
+    val isNightMode: Boolean = false,             // 夜间模式
+    val hasShownMenuGuide: Boolean = false       // 是否已显示过菜单引导
 )

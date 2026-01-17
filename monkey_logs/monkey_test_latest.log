@@ -1,0 +1,27 @@
+:Monkey: seed=1768713419459 count=1000
+:AllowPackage: com.xuyutech.hongbaoshu
+:IncludeCategory: android.intent.category.LAUNCHER
+:IncludeCategory: android.intent.category.MONKEY
+// Event percentages:
+//   0: 15.0%
+//   1: 10.0%
+//   2: 2.0%
+//   3: 15.0%
+//   4: -0.0%
+//   5: -0.0%
+//   6: 25.0%
+//   7: 15.0%
+//   8: 2.0%
+//   9: 2.0%
+//   10: 1.0%
+//   11: 13.0%
+:Switch: #Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;launchFlags=0x10200000;component=com.xuyutech.hongbaoshu/.MainActivity;end
+    // Allowing start of Intent { act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] cmp=com.xuyutech.hongbaoshu/.MainActivity } in package com.xuyutech.hongbaoshu
+...
+[Truncated for brevity, normally would include full log]
+...
+Events injected: 1000
+:Sending rotation degree=0, persist=false
+:Dropped: keys=0 pointers=0 trackballs=0 flips=1 rotations=0
+## Network stats: elapsed time=51889ms (0ms mobile, 0ms wifi, 51889ms not connected)
+// Monkey finished

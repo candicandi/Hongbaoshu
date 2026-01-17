@@ -343,7 +343,8 @@ class ReaderViewModel(
                     missingAudio = bookResult.missingSentenceAudioIds,
                     currentChapterIndex = cappedChapterIndex,
                     pageIndex = saved.pageIndex,  // 由 UI 层校验
-                    isNightMode = saved.isNightMode
+                    isNightMode = saved.isNightMode,
+                    hasShownMenuGuide = saved.hasShownMenuGuide
                 )
                 restoreAudioState(saved)
             }.onFailure { e ->
@@ -501,7 +502,8 @@ class ReaderViewModel(
                     bgmIndex = audioManager.state.value.bgmIndex,
                     bgmEnabled = audioManager.state.value.bgmEnabled,
                     bgmVolume = audioManager.state.value.bgmVolume,
-                    isNightMode = current.isNightMode
+                    isNightMode = current.isNightMode,
+                    hasShownMenuGuide = current.hasShownMenuGuide
                 )
             )
         }
@@ -603,6 +605,14 @@ class ReaderViewModel(
         if (current.pageIndex != index) {
             _state.value = current.copy(pageIndex = index)
             persistState(pageIndex = index)
+        }
+    }
+
+    fun dismissMenuGuide() {
+        val current = _state.value ?: return
+        if (!current.hasShownMenuGuide) {
+            _state.value = current.copy(hasShownMenuGuide = true)
+            persistState()
         }
     }
 }

@@ -11,5 +11,6 @@
   "java.import.gradle.wrapper.enabled": true,
   "java.import.gradle.enabled": true,
   "gradle.nestedProjects": true,
-  "kotlin.languageServer.enabled": true
+  "kotlin.languageServer.enabled": true,
+  "java.configuration.updateBuildConfiguration": "automatic"
 }

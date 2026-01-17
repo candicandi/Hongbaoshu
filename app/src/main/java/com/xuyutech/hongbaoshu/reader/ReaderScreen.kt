@@ -7,10 +7,17 @@ import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Info
 
+import androidx.compose.ui.draw.scale
+
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.clickable
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -319,6 +326,7 @@ fun ReaderScreen(
                         onTopDoubleTap = {
                             if (!showMenu.value) {
                                 showMenu.value = true
+                                viewModel.dismissMenuGuide()
                             }
                         }
                     ) { pageIndexToRender ->
@@ -350,6 +358,20 @@ fun ReaderScreen(
                 }
             }
 
+
+
+            // 用户引导层
+            if (!state.value.hasShownMenuGuide && 
+                state.value.currentChapterIndex == 0 && 
+                state.value.pageIndex == 0 &&
+                !state.value.isLoading &&
+                state.value.error == null
+            ) {
+                MenuGuideOverlay(
+                    onDismiss = { viewModel.dismissMenuGuide() }
+                )
+            }
+            
             // 下拉菜单（带遮罩层）
             if (showMenu.value) {
                 // 遮罩层：点击或滑动菜单以外区域关闭菜单
@@ -375,7 +397,11 @@ fun ReaderScreen(
                     onBgmToggle = { viewModel.playBgm(it) },
                     onBgmNext = { viewModel.nextBgm() },
                     onBgmVolumeChange = { viewModel.setBgmVolume(it) },
-                    onShowToc = { showToc.value = true },
+                    onShowToc = { 
+                        showToc.value = true 
+                        // 如果在引导显示时打开了目录（也是通过菜单打开的），也应该关闭引导
+                        viewModel.dismissMenuGuide()
+                    },
                     narrationEnabled = state.value.narrationEnabled,
                     onNarrationToggle = { enabled ->
                         viewModel.toggleNarration(enabled)
@@ -418,6 +444,140 @@ fun ReaderScreen(
     }
 }
 }
+
+/**
+ * 用户引导层
+ */
+/**
+ * 用户引导层 (Ripple Animation)
+ */
+@Composable
+private fun MenuGuideOverlay(
+    onDismiss: () -> Unit
+) {
+    // 动画状态
+    val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "GuidePulse")
+    
+    // 两个波纹动画，错开播放，形成连贯感
+    val scale1 by infiniteTransition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 1.5f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(2000),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
+        ),
+        label = "Scale1"
+    )
+    val alpha1 by infiniteTransition.animateFloat(
+        initialValue = 0.6f,
+        targetValue = 0f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(2000),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
+        ),
+        label = "Alpha1"
+    )
+
+    val scale2 by infiniteTransition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 1.5f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(2000, delayMillis = 1000),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
+        ),
+        label = "Scale2"
+    )
+    val alpha2 by infiniteTransition.animateFloat(
+        initialValue = 0.6f,
+        targetValue = 0f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(2000, delayMillis = 1000),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
+        ),
+        label = "Alpha2"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            // 渐变背景，顶部深色，底部透明，不再全屏遮挡
+            .background(
+                androidx.compose.ui.graphics.Brush.verticalGradient(
+                    colors = listOf(
+                        Color.Black.copy(alpha = 0.7f),
+                        Color.Transparent
+                    ),
+                    endY = 600f // 只遮挡顶部一部分
+                )
+            )
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null
+            ) { onDismiss() }
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 60.dp), // 避开状态栏，定位到顶部交互区
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // 波纹动画区域
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(80.dp)
+            ) {
+                // 波纹 1
+                Box(
+                    modifier = Modifier
+                        .size(80.dp)
+                        .scale(scale1)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = alpha1), androidx.compose.foundation.shape.CircleShape)
+                )
+                // 波纹 2
+                Box(
+                    modifier = Modifier
+                        .size(80.dp)
+                        .scale(scale2)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = alpha2), androidx.compose.foundation.shape.CircleShape)
+                )
+                
+                // 中心手势图标
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .background(MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.CircleShape)
+                        .padding(6.dp)
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // 提示卡片
+            androidx.compose.material3.Surface(
+                shape = RoundedCornerShape(percent = 50),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 6.dp,
+                shadowElevation = 6.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                   Text(
+                        text = androidx.compose.ui.res.stringResource(id = com.xuyutech.hongbaoshu.R.string.guide_double_tap_menu),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
+    }
+}
+
 
 /**
  * 根据页码索引获取页面数据（支持跨章节预览）

@@ -9,6 +9,6 @@
 - [x] Identify why highlighting is missing on fresh start until page turn (Background thread wiping sentence data in `PageEngine`)
 - [x] Refactor `PageEngine.paginate` to not clear sentence ranges
 - [x] Verify fix (manual compilation and deploy as per user rules)
-- [ ] Build Release APK
-- [ ] Create Git Commit and Tag
-- [ ] Publish GitHub Release
+- [x] Build Release APK
+- [x] Create Git Commit and Tag
+- [x] Publish GitHub Release (Uploaded binary via gh CLI)

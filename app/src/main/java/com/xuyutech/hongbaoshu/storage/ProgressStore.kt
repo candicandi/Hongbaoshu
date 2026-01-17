@@ -25,7 +25,8 @@ data class ProgressState(
     val bgmIndex: Int = 0,
     val bgmEnabled: Boolean = false,
     val bgmVolume: Float = 1.0f,
-    val isNightMode: Boolean = false
+    val isNightMode: Boolean = false,
+    val hasShownMenuGuide: Boolean = false
 )
 
 class ProgressStore(private val context: Context) {
@@ -38,6 +39,7 @@ class ProgressStore(private val context: Context) {
     private val keyBgmEnabled = booleanPreferencesKey("bgm_enabled")
     private val keyBgmVolume = floatPreferencesKey("bgm_volume")
     private val keyIsNightMode = booleanPreferencesKey("is_night_mode")
+    private val keyHasShownMenuGuide = booleanPreferencesKey("has_shown_menu_guide")
 
     val progress: Flow<ProgressState> = context.progressDataStore.data.map { prefs ->
         ProgressState(
@@ -48,7 +50,8 @@ class ProgressStore(private val context: Context) {
             bgmIndex = prefs[keyBgmIndex] ?: 0,
             bgmEnabled = prefs[keyBgmEnabled] ?: false,
             bgmVolume = prefs[keyBgmVolume] ?: 1.0f,
-            isNightMode = prefs[keyIsNightMode] ?: false
+            isNightMode = prefs[keyIsNightMode] ?: false,
+            hasShownMenuGuide = prefs[keyHasShownMenuGuide] ?: false
         )
     }
 
@@ -67,6 +70,7 @@ class ProgressStore(private val context: Context) {
             prefs[keyBgmEnabled] = state.bgmEnabled
             prefs[keyBgmVolume] = state.bgmVolume
             prefs[keyIsNightMode] = state.isNightMode
+            prefs[keyHasShownMenuGuide] = state.hasShownMenuGuide
         }
     }
 
