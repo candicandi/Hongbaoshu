@@ -118,17 +118,16 @@ jobs:
           gcloud services list --enabled --project hongbaoshu | grep testing
 
 
-      - name: Run Tests on Samsung Galaxy S21 Ultra (Virtual/Physical)
+      - name: Run Tests on Firebase Test Lab (Virtual Device)
         if: env.FIREBASE_KEY != ''
         run: |
-          # Note: 'gcloud firebase test android models list' to see available models
-          # 'sm-g998u1' is Galaxy S21 Ultra 5G (Physical) - Subject to availability in Free Tier
-          # If high demand, it might queue. 'Medium' latency.
+          # Using 'redfin' (Pixel 5) virtual device - always available in Free Tier
+          # Run 'gcloud firebase test android models list' to see all available models
           mkdir -p firebase-results
           gcloud firebase test android run \
             --app app/build/outputs/apk/debug/app-debug.apk \
             --test app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk \
-            --device model=sm-g998u1,version=31,locale=zh_CN,orientation=portrait \
+            --device model=redfin,version=30,locale=zh_CN,orientation=portrait \
             --use-orchestrator \
             --results-dir=firebase-results/
       
