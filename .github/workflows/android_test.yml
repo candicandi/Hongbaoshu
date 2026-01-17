@@ -111,6 +111,13 @@ jobs:
         if: env.FIREBASE_KEY != ''
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Enable Google Cloud APIs (Self-Repair)
+        if: env.FIREBASE_KEY != ''
+        run: |
+          gcloud services enable testing.googleapis.com toolresults.googleapis.com cloudresourcemanager.googleapis.com --project hongbaoshu
+          gcloud services list --enabled --project hongbaoshu | grep testing
+
+
       - name: Run Tests on Samsung Galaxy S21 Ultra (Virtual/Physical)
         if: env.FIREBASE_KEY != ''
         run: |
