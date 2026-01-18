@@ -8,6 +8,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Info
 
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 
 
 import androidx.compose.animation.AnimatedVisibility
@@ -859,6 +861,7 @@ private fun MenuPanel(
                         )
                     }
                     Switch(
+                        modifier = Modifier.semantics { contentDescription = "夜间模式开关" },
                         checked = isNightMode,
                         onCheckedChange = { onToggleNightMode() }
                     )
