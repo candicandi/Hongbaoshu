@@ -21,3 +21,5 @@ action_test
 # Security: Ignore Google Cloud Service Account Keys
 hongbaoshu-*.json
 service-account.json
+
+/privacy

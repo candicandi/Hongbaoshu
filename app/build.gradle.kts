@@ -15,8 +15,8 @@ android {
         applicationId = "com.xuyutech.hongbaoshu"
         minSdk = 28
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 5
+        versionName = "1.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -49,12 +49,22 @@ android {
 
     buildTypes {
         release {
+            // 启用代码混淆和优化
             isMinifyEnabled = true
+            // 启用资源压缩,移除未使用的资源
+            isShrinkResources = true
+            // 使用发布签名配置
             signingConfig = signingConfigs.getByName("release")
+            
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            
+            // 优化 APK 大小和性能
+            ndk {
+                debugSymbolLevel = "SYMBOL_TABLE"
+            }
         }
     }
     buildFeatures {
