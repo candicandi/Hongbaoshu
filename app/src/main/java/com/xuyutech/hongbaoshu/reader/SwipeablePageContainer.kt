@@ -43,6 +43,7 @@ fun SwipeablePageContainer(
     onPageChange: (Int) -> Unit,
     onCenterTap: (() -> Unit)? = null,  // 点击中间区域的回调（可选）
     onTopDoubleTap: (() -> Unit)? = null,  // 双击顶部区域的回调（打开菜单）
+    onDragStart: (() -> Unit)? = null, // 拖动开始的回调（用于隐藏 Tooltip 等）
     content: @Composable (Int) -> Unit  // 接收页码，渲染对应页面
 ) {
     val configuration = LocalConfiguration.current
@@ -85,18 +86,27 @@ fun SwipeablePageContainer(
                         }
                     },
                     onTap = { offset ->
-                        val leftZone = size.width * 0.4f
-                        val rightZone = size.width * 0.6f
-                        when {
-                            offset.x < leftZone && canGoPrev -> {
-                                isDragging = true
-                                tapDirection = -1
+                        val topZoneHeight = size.height * 0.2f
+                        val leftZoneWidth = size.width * 0.3f
+                        val rightZoneWidth = size.width * 0.7f
+                        
+                        // Top 20% triggers center tap behavior (menu/dismiss), not page turn
+                        if (offset.y <= topZoneHeight) {
+                            onCenterTap?.invoke()
+                        } else {
+                            when {
+                                offset.x < leftZoneWidth && canGoPrev -> {
+                                    onDragStart?.invoke()
+                                    isDragging = true
+                                    tapDirection = -1
+                                }
+                                offset.x > rightZoneWidth && canGoNext -> {
+                                    onDragStart?.invoke()
+                                    isDragging = true
+                                    tapDirection = 1
+                                }
+                                else -> onCenterTap?.invoke()
                             }
-                            offset.x > rightZone && canGoNext -> {
-                                isDragging = true
-                                tapDirection = 1
-                            }
-                            else -> onCenterTap?.invoke()
                         }
                     }
                 )
@@ -104,6 +114,7 @@ fun SwipeablePageContainer(
             .pointerInput(pageIndex, canGoPrev, canGoNext) {
                 detectHorizontalDragGestures(
                     onDragStart = {
+                        onDragStart?.invoke()
                         isDragging = true
                     },
                     onDragEnd = {

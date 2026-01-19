@@ -43,6 +43,15 @@ class ReaderInstrumentedTest {
         composeTestRule.waitForIdle()
         Thread.sleep(3000)  // 等待分页完成
         
+        // 由于新增了引导弹窗，需要先关闭弹窗
+        // 查找 "我知道了" 按钮并点击
+        val guideButtons = composeTestRule.onAllNodesWithText("我知道了")
+        if (guideButtons.fetchSemanticsNodes().isNotEmpty()) {
+            guideButtons.onFirst().performClick()
+            composeTestRule.waitForIdle()
+            Thread.sleep(500)
+        }
+        
         // 执行右滑手势返回 (从左边缘向右滑动)
         composeTestRule.onRoot().performTouchInput {
             swipe(
@@ -67,10 +76,13 @@ class ReaderInstrumentedTest {
         composeTestRule.waitForIdle()
         Thread.sleep(2000)
         
-        // 尝试点击中间区域以关闭可能存在的引导层
-        composeTestRule.onRoot().performTouchInput { click() }
-        composeTestRule.waitForIdle()
-        Thread.sleep(1000)
+        // 如果有引导弹窗，先点击关闭
+        val guideButtons = composeTestRule.onAllNodesWithText("我知道了")
+        if (guideButtons.fetchSemanticsNodes().isNotEmpty()) {
+            guideButtons.onFirst().performClick()
+            composeTestRule.waitForIdle()
+            Thread.sleep(1000)
+        }
 
         // 双击顶部区域唤出菜单
         composeTestRule.onRoot().performTouchInput {
@@ -91,6 +103,14 @@ class ReaderInstrumentedTest {
         composeTestRule.onNodeWithContentDescription("封面").performClick()
         composeTestRule.waitForIdle()
         Thread.sleep(2000)
+
+        // 如果有引导弹窗，先点击关闭
+        val guideButtons = composeTestRule.onAllNodesWithText("我知道了")
+        if (guideButtons.fetchSemanticsNodes().isNotEmpty()) {
+            guideButtons.onFirst().performClick()
+            composeTestRule.waitForIdle()
+            Thread.sleep(1000)
+        }
 
         // 打开菜单
         composeTestRule.onRoot().performTouchInput {

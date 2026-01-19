@@ -276,4 +276,16 @@ class AudioManagerImpl(
             current.copy(bgmVolume = safeVolume)
         }
     }
+
+    override fun setNarrationSpeed(speed: Float) {
+        val safeSpeed = speed.coerceIn(0.5f, 1.5f)
+        try {
+            narrationPlayer.setPlaybackSpeed(safeSpeed)
+        } catch (e: Exception) {
+            android.util.Log.e("AudioManager", "Error setting playback speed: ${e.message}")
+        }
+        _state.update { current ->
+            current.copy(narrationSpeed = safeSpeed)
+        }
+    }
 }

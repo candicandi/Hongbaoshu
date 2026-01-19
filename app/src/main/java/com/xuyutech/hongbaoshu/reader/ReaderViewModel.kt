@@ -54,6 +54,9 @@ class ReaderViewModel(
     private var delayedPlayJob: Job? = null
     // 是否正在手动翻页（用于防止自动播放干扰）
     private var isManualPageTurn = false
+    // 上一个播放完成的句子ID(用于防止跨页重复)
+    private var lastCompletedSentenceId: String? = null
+
 
     init {
         load()
@@ -79,6 +82,7 @@ class ReaderViewModel(
      * 播放指定句子之后的下一句
      */
     private fun playNextSentenceAfter(completedSentenceId: String) {
+        lastCompletedSentenceId = completedSentenceId
         val sentences = _state.value?.currentPageSentenceIds ?: return
         val idx = sentences.indexOf(completedSentenceId)
         
@@ -86,7 +90,7 @@ class ReaderViewModel(
             // 当前页还有下一句
             playSentence(sentences[idx + 1])
         } else {
-            // 当前页读完，需要翻页
+            // 当前页读完,需要翻页
             val current = _state.value ?: return
             val book = current.book ?: return
             val pageCount = getCachedPages(book.chapters[current.currentChapterIndex].id)?.size ?: return
@@ -137,9 +141,24 @@ class ReaderViewModel(
     private fun schedulePlayFirstSentence() {
         viewModelScope.launch {
             delay(300L)
-            _state.value = _state.value?.copy(needPlayFirstSentence = true)
+            // 检查新页面的第一句是否是刚刚播放完的句子
+            val sentences = _state.value?.currentPageSentenceIds ?: emptyList()
+            if (sentences.isNotEmpty()) {
+                val firstSentence = sentences.first()
+                if (firstSentence == lastCompletedSentenceId && sentences.size > 1) {
+                    // 跨页句子,播放下一句
+                    playSentence(sentences[1])
+                    lastCompletedSentenceId = null // Reset after handling
+                } else {
+                    // 正常播放第一句
+                    _state.value = _state.value?.copy(needPlayFirstSentence = true)
+                }
+            } else {
+                _state.value = _state.value?.copy(needPlayFirstSentence = true)
+            }
         }
     }
+
     
     /**
      * 清除播放下一句的标记
@@ -372,13 +391,20 @@ class ReaderViewModel(
             audioManager.playBgm(saved.bgmIndex)
         }
         audioManager.setBgmVolume(saved.bgmVolume)
+        if (saved.bgmEnabled) {
+            audioManager.playBgm(saved.bgmIndex)
+        }
+        audioManager.setBgmVolume(saved.bgmVolume)
+        
+        // 恢复朗读语速
+        audioManager.setNarrationSpeed(saved.narrationSpeed)
     }
 
     fun saveAudioState(narrationSentenceId: String?) {
         persistState(narrationSentenceId = narrationSentenceId)
     }
 
-    fun playBgm(enable: Boolean) {
+    fun toggleBgm(enable: Boolean) {
         if (enable) audioManager.playBgm() else audioManager.pauseBgm()
         persistState()
     }
@@ -390,6 +416,11 @@ class ReaderViewModel(
 
     fun setBgmVolume(volume: Float) {
         audioManager.setBgmVolume(volume)
+        persistState()
+    }
+
+    fun setNarrationSpeed(speed: Float) {
+        audioManager.setNarrationSpeed(speed)
         persistState()
     }
 
@@ -503,7 +534,8 @@ class ReaderViewModel(
                     bgmEnabled = audioManager.state.value.bgmEnabled,
                     bgmVolume = audioManager.state.value.bgmVolume,
                     isNightMode = current.isNightMode,
-                    hasShownMenuGuide = current.hasShownMenuGuide
+                    hasShownMenuGuide = current.hasShownMenuGuide,
+                    narrationSpeed = audioManager.state.value.narrationSpeed
                 )
             )
         }
@@ -610,9 +642,16 @@ class ReaderViewModel(
 
     fun dismissMenuGuide() {
         val current = _state.value ?: return
-        if (!current.hasShownMenuGuide) {
-            _state.value = current.copy(hasShownMenuGuide = true)
-            persistState()
-        }
+        // 同时更新持久化状态和会话状态
+        _state.value = current.copy(
+            hasShownMenuGuide = true,
+            isMenuGuideDismissedInSession = true
+        )
+        persistState()
+    }
+
+    fun dismissMenuGuideInSession() {
+        val current = _state.value ?: return
+        _state.value = current.copy(isMenuGuideDismissedInSession = true)
     }
 }

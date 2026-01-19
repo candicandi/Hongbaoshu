@@ -8,7 +8,8 @@ data class AudioState(
     val narrationSentenceId: String? = null,
     val narrationPosition: Long = 0L,
     val narrationPlaying: Boolean = false,
-    val bgmVolume: Float = 1.0f
+    val bgmVolume: Float = 1.0f,
+    val narrationSpeed: Float = 1.0f
 )
 
 /**
@@ -38,6 +39,8 @@ interface AudioManager {
     
     /** 设置朗读完成回调 */
     fun setNarrationCompletionCallback(callback: NarrationCompletionCallback?)
+
+    fun setNarrationSpeed(speed: Float)
 
     fun playFlip()
 

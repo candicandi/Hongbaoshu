@@ -72,9 +72,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import kotlinx.coroutines.delay
 import com.xuyutech.hongbaoshu.audio.AudioManager
 import com.xuyutech.hongbaoshu.data.Chapter
 import com.xuyutech.hongbaoshu.data.ParagraphType
+
 
 @Composable
 fun ReaderScreen(
@@ -89,6 +93,20 @@ fun ReaderScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
+    
+    // Tooltip State
+    var activeTooltipSentenceId by remember { mutableStateOf<String?>(null) }
+    // Clicked sentence for highlighting (same style as narration)
+    var clickedSentenceId by remember { mutableStateOf<String?>(null) }
+    
+    // Auto-dismiss tooltip after 3 seconds
+    LaunchedEffect(activeTooltipSentenceId) {
+        if (activeTooltipSentenceId != null) {
+            delay(3000)
+            activeTooltipSentenceId = null
+            clickedSentenceId = null
+        }
+    }
 
     // 显示 Toast 消息
     LaunchedEffect(state.value.toastMessage) {
@@ -316,6 +334,9 @@ fun ReaderScreen(
                                 }
                                 onBack()
                             } else {
+                                // Dismiss tooltip on page turn
+                                activeTooltipSentenceId = null
+                                clickedSentenceId = null
                                 viewModel.updatePage(delta, pageCount, prevChapterPages.size)
                             }
                         },
@@ -324,6 +345,13 @@ fun ReaderScreen(
                             if (showMenu.value) {
                                 showMenu.value = false
                             }
+                            // 点击任何位置都尝试关闭 Tooltip 和清除高亮
+                            activeTooltipSentenceId = null
+                            clickedSentenceId = null
+                        },
+                        onDragStart = {
+                            activeTooltipSentenceId = null
+                            clickedSentenceId = null
                         },
                         onTopDoubleTap = {
                             if (!showMenu.value) {
@@ -354,7 +382,21 @@ fun ReaderScreen(
                             annotationStyle = annotationStyle,
                             textParagraphSpacingPx = textParagraphSpacingPx,
                             annotationSpacingPx = annotationSpacingPx,
-                            pageEngine = viewModel.pageEngine
+                            pageEngine = viewModel.pageEngine,
+                            activeTooltipSentenceId = activeTooltipSentenceId,
+                            clickedSentenceId = clickedSentenceId,
+                            onTooltipRequest = { id -> 
+                                activeTooltipSentenceId = id
+                                clickedSentenceId = id
+                            },
+                            onPlayNarration = { id ->
+                                activeTooltipSentenceId = null
+                                clickedSentenceId = null
+                                if (!state.value.narrationEnabled) {
+                                    viewModel.toggleNarration(true)
+                                }
+                                viewModel.playSentence(id)
+                            }
                         )
                     }
                 }
@@ -362,15 +404,16 @@ fun ReaderScreen(
 
 
 
-            // 用户引导层
-            if (!state.value.hasShownMenuGuide && 
-                state.value.currentChapterIndex == 0 && 
-                state.value.pageIndex == 0 &&
-                !state.value.isLoading &&
-                state.value.error == null
-            ) {
-                MenuGuideOverlay(
-                    onDismiss = { viewModel.dismissMenuGuide() }
+            // 用户引导弹窗
+            val shouldShowGuide = !state.value.hasShownMenuGuide && 
+                                  !state.value.isMenuGuideDismissedInSession &&
+                                  !state.value.isLoading &&
+                                  state.value.error == null
+
+            if (shouldShowGuide) {
+                MenuGuideDialog(
+                    onDismiss = { viewModel.dismissMenuGuideInSession() },
+                    onNeverShowAgain = { viewModel.dismissMenuGuide() }
                 )
             }
             
@@ -396,7 +439,7 @@ fun ReaderScreen(
             ) {
                 MenuPanel(
                     audioState = audioState.value,
-                    onBgmToggle = { viewModel.playBgm(it) },
+                    onBgmToggle = { viewModel.toggleBgm(it) },
                     onBgmNext = { viewModel.nextBgm() },
                     onBgmVolumeChange = { viewModel.setBgmVolume(it) },
                     onShowToc = { 
@@ -416,6 +459,7 @@ fun ReaderScreen(
                             }
                         }
                     },
+                    onNarrationSpeedChange = { viewModel.setNarrationSpeed(it) },
                     fontSizeLevel = state.value.fontSizeLevel,
                     onFontSizeChange = { level -> viewModel.setFontSize(level) },
                     onDismiss = { showMenu.value = false },
@@ -444,140 +488,42 @@ fun ReaderScreen(
         }
     }
     }
+    }
 }
-}
-
 /**
- * 用户引导层
- */
-/**
- * 用户引导层 (Ripple Animation)
+ * 用户引导弹窗
  */
 @Composable
-private fun MenuGuideOverlay(
-    onDismiss: () -> Unit
+private fun MenuGuideDialog(
+    onDismiss: () -> Unit,
+    onNeverShowAgain: () -> Unit
 ) {
-    // 动画状态
-    val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "GuidePulse")
-    
-    // 两个波纹动画，错开播放，形成连贯感
-    val scale1 by infiniteTransition.animateFloat(
-        initialValue = 0.5f,
-        targetValue = 1.5f,
-        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-            animation = androidx.compose.animation.core.tween(2000),
-            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
-        ),
-        label = "Scale1"
-    )
-    val alpha1 by infiniteTransition.animateFloat(
-        initialValue = 0.6f,
-        targetValue = 0f,
-        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-            animation = androidx.compose.animation.core.tween(2000),
-            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
-        ),
-        label = "Alpha1"
-    )
-
-    val scale2 by infiniteTransition.animateFloat(
-        initialValue = 0.5f,
-        targetValue = 1.5f,
-        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-            animation = androidx.compose.animation.core.tween(2000, delayMillis = 1000),
-            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
-        ),
-        label = "Scale2"
-    )
-    val alpha2 by infiniteTransition.animateFloat(
-        initialValue = 0.6f,
-        targetValue = 0f,
-        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-            animation = androidx.compose.animation.core.tween(2000, delayMillis = 1000),
-            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
-        ),
-        label = "Alpha2"
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            // 渐变背景，顶部深色，底部透明，不再全屏遮挡
-            .background(
-                androidx.compose.ui.graphics.Brush.verticalGradient(
-                    colors = listOf(
-                        Color.Black.copy(alpha = 0.7f),
-                        Color.Transparent
-                    ),
-                    endY = 600f // 只遮挡顶部一部分
-                )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { 
+            Text(
+                text = "操作提示",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            ) 
+        },
+        text = {
+            Text(
+                text = "双击屏幕顶部区域可唤出菜单，进行目录跳转、夜间模式切换等操作。",
+                style = MaterialTheme.typography.bodyMedium
             )
-            .clickable(
-                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                indication = null
-            ) { onDismiss() }
-    ) {
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 60.dp), // 避开状态栏，定位到顶部交互区
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // 波纹动画区域
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.size(80.dp)
-            ) {
-                // 波纹 1
-                Box(
-                    modifier = Modifier
-                        .size(80.dp)
-                        .scale(scale1)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = alpha1), androidx.compose.foundation.shape.CircleShape)
-                )
-                // 波纹 2
-                Box(
-                    modifier = Modifier
-                        .size(80.dp)
-                        .scale(scale2)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = alpha2), androidx.compose.foundation.shape.CircleShape)
-                )
-                
-                // 中心手势图标
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Default.Info,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier
-                        .size(32.dp)
-                        .background(MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.CircleShape)
-                        .padding(6.dp)
-                )
+        },
+        confirmButton = {
+            TextButton(onClick = onNeverShowAgain) {
+                Text("不再提醒")
             }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // 提示卡片
-            androidx.compose.material3.Surface(
-                shape = RoundedCornerShape(percent = 50),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                tonalElevation = 6.dp,
-                shadowElevation = 6.dp,
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                   Text(
-                        text = androidx.compose.ui.res.stringResource(id = com.xuyutech.hongbaoshu.R.string.guide_double_tap_menu),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("我知道了")
             }
         }
-    }
+    )
 }
 
 
@@ -633,6 +579,7 @@ private fun MenuPanel(
     onShowToc: () -> Unit,
     narrationEnabled: Boolean,
     onNarrationToggle: (Boolean) -> Unit,
+    onNarrationSpeedChange: (Float) -> Unit,
     fontSizeLevel: Int,
     onFontSizeChange: (Int) -> Unit,
     onDismiss: () -> Unit,
@@ -747,6 +694,38 @@ private fun MenuPanel(
                         checked = narrationEnabled,
                         onCheckedChange = onNarrationToggle
                     )
+                }
+
+                // 语速调节 Section
+                if (narrationEnabled) {
+                    androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                    
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "朗读语速",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "%.1fx".format(audioState.narrationSpeed),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        
+                        androidx.compose.material3.Slider(
+                            value = audioState.narrationSpeed,
+                            onValueChange = onNarrationSpeedChange,
+                            valueRange = 0.5f..1.5f,
+                            steps = 0, // 连续滑动
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
                 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
@@ -972,7 +951,11 @@ private fun PageContent(
     annotationStyle: TextStyle,
     textParagraphSpacingPx: Int,
     annotationSpacingPx: Int,
-    pageEngine: PageEngine
+    pageEngine: PageEngine,
+    activeTooltipSentenceId: String?,
+    clickedSentenceId: String?,
+    onTooltipRequest: (String) -> Unit,
+    onPlayNarration: (String) -> Unit
 ) {
     val density = LocalDensity.current
     val textParagraphSpacingDp = with(density) { textParagraphSpacingPx.toDp() }
@@ -1023,7 +1006,11 @@ private fun PageContent(
                         annotationStyle = annotationStyle,
                         textParagraphSpacingDp = textParagraphSpacingDp,
                         annotationSpacingDp = annotationSpacingDp,
-                        pageEngine = pageEngine
+                        pageEngine = pageEngine,
+                        onTextTap = { _, id -> onTooltipRequest(id) },
+                        activeTooltipSentenceId = activeTooltipSentenceId,
+                        clickedSentenceId = clickedSentenceId,
+                        onPlayNarration = onPlayNarration
                     )
                 }
             }
@@ -1045,6 +1032,18 @@ private fun PageContent(
 /**
  * 渲染单个 PageSlice
  */
+// ... (existing helper methods if any)
+
+/**
+ * 提示框数据
+ */
+data class TooltipData(
+    val isVisible: Boolean = false,
+    val position: androidx.compose.ui.geometry.Offset = androidx.compose.ui.geometry.Offset.Zero,
+    val sentenceId: String = "",
+    val sentenceContent: String = "" // Optional, for debug
+)
+
 @Composable
 private fun SliceContent(
     slice: PageSlice,
@@ -1054,7 +1053,11 @@ private fun SliceContent(
     annotationStyle: TextStyle,
     textParagraphSpacingDp: androidx.compose.ui.unit.Dp,
     annotationSpacingDp: androidx.compose.ui.unit.Dp,
-    pageEngine: PageEngine
+    pageEngine: PageEngine,
+    onTextTap: (androidx.compose.ui.geometry.Offset, String) -> Unit,
+    activeTooltipSentenceId: String?,
+    clickedSentenceId: String?,
+    onPlayNarration: (String) -> Unit
 ) {
     val isText = slice.paragraphType == ParagraphType.text
     val spacing = if (slice.isLastSlice) {
@@ -1066,16 +1069,19 @@ private fun SliceContent(
         val sentenceRanges = pageEngine.getSentenceRanges(slice.paragraphId)
         
         // 构建带高亮的文本（缩进通过 textIndent 样式实现，不要手动添加空格）
-        val annotatedText = remember(slice, currentNarrationId) {
+        val annotatedText = remember(slice, currentNarrationId, clickedSentenceId) {
             buildAnnotatedString {
                 val sliceText = paragraph.content.substring(
                     slice.startChar.coerceIn(0, paragraph.content.length),
                     slice.endChar.coerceIn(0, paragraph.content.length)
                 )
                 
-                if (currentNarrationId != null && sentenceRanges != null) {
-                    // 找到当前朗读句子的范围
-                    val sentenceIdx = paragraph.sentences.indexOfFirst { it.id == currentNarrationId }
+                // Determine which sentence to highlight (clicked takes precedence for visual feedback)
+                val highlightSentenceId = clickedSentenceId ?: currentNarrationId
+                
+                if (highlightSentenceId != null && sentenceRanges != null) {
+                    // 找到当前朗读/点击句子的范围
+                    val sentenceIdx = paragraph.sentences.indexOfFirst { it.id == highlightSentenceId }
                     if (sentenceIdx >= 0 && sentenceIdx < sentenceRanges.size) {
                         val highlightRange = sentenceRanges[sentenceIdx]
                         // 计算高亮范围与当前片段的交集
@@ -1112,11 +1118,75 @@ private fun SliceContent(
             textStyle
         }
         
-        Text(
-            text = annotatedText,
-            style = finalStyle,
-            modifier = Modifier.padding(bottom = spacing)
-        )
+
+        
+        Box {
+            var textLayoutResult by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+            var localClickedCharOffset by remember { mutableStateOf<Int?>(null) }
+            var localClickedSentenceId by remember { mutableStateOf<String?>(null) }
+            
+            Text(
+                text = annotatedText,
+                style = finalStyle,
+                modifier = Modifier
+                    .padding(bottom = spacing)
+                    .pointerInput(Unit) {
+                        detectTapGestures { pos ->
+                            textLayoutResult?.let { layoutResult ->
+                                val offset = layoutResult.getOffsetForPosition(pos)
+                                val paragraphCharIndex = slice.startChar + offset
+                                if (sentenceRanges != null) {
+                                    val sentenceIdx = sentenceRanges.indexOfFirst { range ->
+                                        paragraphCharIndex in range
+                                    }
+                                    if (sentenceIdx >= 0 && sentenceIdx < paragraph.sentences.size) {
+                                        val sentence = paragraph.sentences[sentenceIdx]
+                                        onTextTap(pos, sentence.id)
+                                        // Store the character offset for accurate positioning
+                                        localClickedCharOffset = offset
+                                        localClickedSentenceId = sentence.id
+                                    }
+                                }
+                            }
+                        }
+                    },
+                onTextLayout = { textLayoutResult = it }
+            )
+            
+            // Popup Logic - use character bounding box for accurate positioning
+            if (activeTooltipSentenceId != null && 
+                activeTooltipSentenceId == localClickedSentenceId && 
+                localClickedCharOffset != null &&
+                textLayoutResult != null) {
+                
+                // Get the bounding box of the clicked character
+                val boundingBox = textLayoutResult!!.getBoundingBox(localClickedCharOffset!!)
+                
+                // Measure tooltip width (approximate)
+                val tooltipWidth = 100.dp
+                val tooltipWidthPx = with(LocalDensity.current) { tooltipWidth.toPx() }
+                
+                val tooltipHeightPx = with(LocalDensity.current) { 60.dp.toPx() }
+                
+                // Position tooltip: centered horizontally above the character
+                // Since we are in a Box wrapping the Text, these coordinates are local to the Text
+                val popupOffset = androidx.compose.ui.unit.IntOffset(
+                    x = (boundingBox.left + boundingBox.width / 2 - tooltipWidthPx / 2).toInt(),
+                    y = (boundingBox.top - tooltipHeightPx).toInt()
+                )
+                
+                androidx.compose.ui.window.Popup(
+                    alignment = Alignment.TopStart,
+                    offset = popupOffset,
+                    onDismissRequest = { /* Dismissal handled by parent */ }
+                ) {
+                    ReadingTooltip(
+                        onClick = { onPlayNarration(localClickedSentenceId!!) }
+                    )
+                }
+            }
+        }
+
     } else {
         // annotation 类型
         val prefix = if (slice.isFirstSlice) "【注】" else ""
@@ -1130,5 +1200,38 @@ private fun SliceContent(
             style = annotationStyle,
             modifier = Modifier.padding(bottom = spacing)
         )
+    }
+}
+
+
+@Composable
+private fun ReadingTooltip(
+    onClick: () -> Unit
+) {
+    androidx.compose.material3.Surface(
+        onClick = onClick,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.inverseSurface,
+        shadowElevation = 4.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            androidx.compose.material3.Icon(
+                imageVector = androidx.compose.material.icons.Icons.Default.PlayArrow,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.inverseOnSurface,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            Text(
+                text = "开始朗读",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.inverseOnSurface
+            )
+        }
     }
 }
