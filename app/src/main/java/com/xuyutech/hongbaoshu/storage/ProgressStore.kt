@@ -22,11 +22,9 @@ data class ProgressState(
     val pageIndex: Int = 0,
     val narrationSentenceId: String? = null,
     val narrationPosition: Long = 0L,
-    val bgmIndex: Int = 0,
-    val bgmEnabled: Boolean = false,
-    val bgmVolume: Float = 1.0f,
     val isNightMode: Boolean = false,
     val hasShownMenuGuide: Boolean = false,
+    val hasShownToolbarHint: Boolean = false,
     val narrationSpeed: Float = 1.0f
 )
 
@@ -36,11 +34,9 @@ class ProgressStore(private val context: Context) {
     private val keyPage = intPreferencesKey("page_index")
     private val keyNarration = stringPreferencesKey("narration_sentence_id")
     private val keyNarrationPos = longPreferencesKey("narration_position")
-    private val keyBgmIndex = intPreferencesKey("bgm_index")
-    private val keyBgmEnabled = booleanPreferencesKey("bgm_enabled")
-    private val keyBgmVolume = floatPreferencesKey("bgm_volume")
     private val keyIsNightMode = booleanPreferencesKey("is_night_mode")
     private val keyHasShownMenuGuide = booleanPreferencesKey("has_shown_menu_guide")
+    private val keyHasShownToolbarHint = booleanPreferencesKey("has_shown_toolbar_hint")
     private val keyNarrationSpeed = floatPreferencesKey("narration_speed")
 
     val progress: Flow<ProgressState> = context.progressDataStore.data.map { prefs ->
@@ -49,11 +45,9 @@ class ProgressStore(private val context: Context) {
             pageIndex = prefs[keyPage] ?: 0,
             narrationSentenceId = prefs[keyNarration],
             narrationPosition = prefs[keyNarrationPos] ?: 0L,
-            bgmIndex = prefs[keyBgmIndex] ?: 0,
-            bgmEnabled = prefs[keyBgmEnabled] ?: false,
-            bgmVolume = prefs[keyBgmVolume] ?: 1.0f,
             isNightMode = prefs[keyIsNightMode] ?: false,
             hasShownMenuGuide = prefs[keyHasShownMenuGuide] ?: false,
+            hasShownToolbarHint = prefs[keyHasShownToolbarHint] ?: false,
             narrationSpeed = prefs[keyNarrationSpeed] ?: 1.0f
         )
     }
@@ -69,11 +63,9 @@ class ProgressStore(private val context: Context) {
                 prefs[keyNarration] = state.narrationSentenceId
                 prefs[keyNarrationPos] = state.narrationPosition
             }
-            prefs[keyBgmIndex] = state.bgmIndex
-            prefs[keyBgmEnabled] = state.bgmEnabled
-            prefs[keyBgmVolume] = state.bgmVolume
             prefs[keyIsNightMode] = state.isNightMode
             prefs[keyHasShownMenuGuide] = state.hasShownMenuGuide
+            prefs[keyHasShownToolbarHint] = state.hasShownToolbarHint
             prefs[keyNarrationSpeed] = state.narrationSpeed
         }
     }

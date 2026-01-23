@@ -29,9 +29,7 @@ data class PageSlice(
 data class Page(
     val index: Int,                    // 章节内页码（0-based）
     val slices: List<PageSlice>,
-    val isFirstPage: Boolean = false,  // 是否是章节第一页（需要显示标题）
-    val globalIndex: Int = 0,          // 全书页码（1-based）
-    val totalPages: Int = 0            // 全书总页数
+    val isFirstPage: Boolean = false  // 是否是章节第一页（需要显示标题）
 )
 
 /**

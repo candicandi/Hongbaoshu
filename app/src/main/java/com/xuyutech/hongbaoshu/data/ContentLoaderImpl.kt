@@ -7,7 +7,6 @@ import kotlinx.serialization.json.Json
 
 private const val TEXT_PATH = "text/text.json"
 private const val NARRATION_DIR = "audio/narration"
-private const val BGM_DIR = "audio/bgm"
 private const val FLIP_SOUND_PATH = "sound/page_flip.wav.ogg"
 private const val COVER_IMAGE_PATH = "images/cover.png"
 
@@ -21,7 +20,6 @@ class ContentLoaderImpl : ContentLoader {
 
     private var cachedResult: BookLoadResult? = null
     private val narrationMap: MutableMap<String, Uri> = mutableMapOf()
-    private var bgmUris: List<Uri> = emptyList()
     private var flipUri: Uri? = null
     private var coverUri: Uri? = null
 
@@ -41,8 +39,6 @@ class ContentLoaderImpl : ContentLoader {
         return uri
     }
 
-    override fun bgmPlaylist(): List<Uri> = bgmUris
-
     override fun flipSound(): Uri? = flipUri
 
     override fun coverImage(): Uri? = coverUri
@@ -57,7 +53,6 @@ class ContentLoaderImpl : ContentLoader {
 
     private fun buildAudioMaps(context: Context) {
         narrationMap.clear()
-        bgmUris = emptyList()
         coverUri = assetUri(COVER_IMAGE_PATH)
 
         // narration
@@ -68,8 +63,6 @@ class ContentLoaderImpl : ContentLoader {
                 narrationMap[prefix] = assetUri("$NARRATION_DIR/$filename")
             }
         }
-        // bgm
-        bgmUris = context.assets.list(BGM_DIR).orEmpty().sorted().map { assetUri("$BGM_DIR/$it") }
         // flip sound
         flipUri = assetUri(FLIP_SOUND_PATH)
     }

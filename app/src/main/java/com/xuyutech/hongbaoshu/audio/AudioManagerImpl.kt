@@ -3,13 +3,13 @@ package com.xuyutech.hongbaoshu.audio
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.SoundPool
-import android.net.Uri
-import android.os.PowerManager
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes as Media3AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import com.xuyutech.hongbaoshu.data.ContentLoader
@@ -30,20 +30,16 @@ class AudioManagerImpl(
         .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
         .setUsage(C.USAGE_MEDIA)
         .build()
-
-    private val bgmPlayer: ExoPlayer = ExoPlayer.Builder(context)
-        .setAudioAttributes(audioAttributes, true)
-        .setWakeMode(C.WAKE_MODE_NETWORK)  // 使用更强的唤醒模式
-        .build()
     
     private var narrationPlayer: ExoPlayer = createNarrationPlayer()
+    private var stableNarrationPlayer: Player = createStableNarrationPlayer(narrationPlayer)
     
     private fun createNarrationPlayer(): ExoPlayer {
         return ExoPlayer.Builder(context)
             .setAudioAttributes(audioAttributes, true)
             .setWakeMode(C.WAKE_MODE_NETWORK)  // 使用更强的唤醒模式
             .build().also { player ->
-                player.addListener(createNarrationListener())
+                player.addListener(createNarrationListener(player))
             }
     }
     private val soundPool: SoundPool by lazy {
@@ -58,45 +54,105 @@ class AudioManagerImpl(
             .build()
     }
 
-    private var bgmUris: List<Uri> = emptyList()
     private var flipSoundId: Int = 0
     private var narrationCompletionCallback: NarrationCompletionCallback? = null
+    private val playbackServiceController = PlaybackServiceController(context)
+    private var narrationPlaybackState: Int = Player.STATE_IDLE
+    private var autoAdvancePending: Boolean = false
 
-    private fun createNarrationListener(): Player.Listener {
+    private fun createStableNarrationPlayer(player: Player): Player {
+        return object : ForwardingPlayer(player) {
+            override fun getPlaybackState(): Int {
+                return if (autoAdvancePending) {
+                    Player.STATE_READY
+                } else {
+                    super.getPlaybackState()
+                }
+            }
+
+            override fun isPlaying(): Boolean {
+                return if (autoAdvancePending) {
+                    true
+                } else {
+                    super.isPlaying()
+                }
+            }
+        }
+    }
+
+    private fun createNarrationListener(player: ExoPlayer): Player.Listener {
         return object : Player.Listener {
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED) {
-                    val completedId = _state.value.narrationSentenceId
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val newId = mediaItem?.mediaId
+                if (newId != null) {
                     _state.update { current ->
                         current.copy(
-                            narrationSentenceId = null,
+                            narrationSentenceId = newId,
                             narrationPosition = 0L,
-                            narrationPlaying = false
+                            narrationError = null
                         )
                     }
-                    // 通知回调播放下一句（在后台线程执行，不依赖 UI）
+                    updateForegroundState()
+                }
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                narrationPlaybackState = playbackState
+                if (playbackState == Player.STATE_ENDED) {
+                    val completedId = player.currentMediaItem?.mediaId
+                    // 只有当整个列表播放结束（没有下一首了）时，才触发完成回调
+                    // ExoPlayer 自动切歌时不会触发 STATE_ENDED，只会触发 onMediaItemTransition
                     if (completedId != null) {
+                        autoAdvancePending = narrationCompletionCallback != null
+                        _state.update { current ->
+                            current.copy(
+                                narrationPosition = 0L,
+                                narrationError = null
+                            )
+                        }
+                        updateForegroundState()
+                        // 这里的回调含义变成了“本页/本列表播完”，通常用于翻页
                         narrationCompletionCallback?.onSentenceCompleted(completedId)
                     }
                 }
             }
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                _state.update { current ->
-                    current.copy(
-                        narrationPosition = narrationPlayer.currentPosition,
-                        narrationPlaying = isPlaying
-                    )
+                // 仅更新状态，不再负责“防抖动”，因为列表播放天然无缝
+                val activeId = player.currentMediaItem?.mediaId
+                if (activeId != null) {
+                     if (isPlaying) {
+                        autoAdvancePending = false
+                    }
+                    // 仍保留对 STATE_ENDED 的特殊处理，以防万一
+                    if (!isPlaying &&
+                        narrationPlaybackState == Player.STATE_ENDED &&
+                        narrationCompletionCallback != null
+                    ) {
+                        return
+                    }
+                    _state.update { current ->
+                        current.copy(
+                            narrationPosition = player.currentPosition,
+                            narrationPlaying = isPlaying,
+                            narrationError = null
+                        )
+                    }
+                    updateForegroundState()
                 }
             }
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 android.util.Log.e("AudioManager", "Player error: ${error.message}")
-                // 播放器出错时重置状态
-                _state.update { current ->
-                    current.copy(
-                        narrationSentenceId = null,
-                        narrationPosition = 0L,
-                        narrationPlaying = false
-                    )
+                val activeId = player.currentMediaItem?.mediaId
+                if (activeId != null) {
+                    _state.update { current ->
+                        current.copy(
+                            narrationSentenceId = null,
+                            narrationPosition = 0L,
+                            narrationPlaying = false,
+                            narrationError = "朗读异常，请切换前台或重新播放"
+                        )
+                    }
+                    updateForegroundState()
                 }
             }
         }
@@ -114,19 +170,21 @@ class AudioManagerImpl(
             // 检查播放器是否处于错误状态
             if (narrationPlayer.playerError != null) {
                 android.util.Log.w("AudioManager", "Recreating narration player due to error")
-                narrationPlayer.release()
-                narrationPlayer = createNarrationPlayer()
+                resetNarrationPlayer()
             }
         } catch (e: Exception) {
             android.util.Log.e("AudioManager", "Error checking player state: ${e.message}")
-            narrationPlayer = createNarrationPlayer()
+            resetNarrationPlayer()
         }
     }
 
+    private fun resetNarrationPlayer() {
+        narrationPlayer.release()
+        narrationPlayer = createNarrationPlayer()
+        stableNarrationPlayer = createStableNarrationPlayer(narrationPlayer)
+    }
+
     private fun ensureResourcesLoaded() {
-        if (bgmUris.isEmpty()) {
-            bgmUris = contentLoader.bgmPlaylist()
-        }
         if (flipSoundId == 0) {
             contentLoader.flipSound()?.let { uri ->
                 val rawPath = uri.path ?: return@let
@@ -143,100 +201,85 @@ class AudioManagerImpl(
         }
     }
 
-    override fun playBgm(index: Int?) {
-        ensureResourcesLoaded()
-        if (bgmUris.isEmpty()) return
-        val target = index ?: _state.value.bgmIndex
-        val idx = target.coerceIn(0, bgmUris.lastIndex)
-        if (idx != _state.value.bgmIndex || !bgmPlayer.isPlaying) {
-            bgmPlayer.setMediaItem(MediaItem.fromUri(bgmUris[idx]))
-            bgmPlayer.prepare()
-        }
-        bgmPlayer.playWhenReady = true
-        _state.update { current -> 
-            current.copy(bgmEnabled = true, bgmIndex = idx)
-        }
-    }
+    override fun playNarrationList(sentenceIds: List<String>, startIndex: Int): Boolean {
+        if (sentenceIds.isEmpty()) return false
+        val idx = startIndex.coerceIn(0, sentenceIds.lastIndex)
+        val startId = sentenceIds[idx]
+        
+        // 验证首个音频是否存在
+        if (contentLoader.narrationUri(startId) == null) return false
 
-    override fun pauseBgm() {
-        bgmPlayer.pause()
-        _state.update { current -> 
-            current.copy(bgmEnabled = false)
-        }
-    }
+        ensureNarrationPlayerReady()
+        autoAdvancePending = false
 
-    override fun nextBgm() {
-        ensureResourcesLoaded()
-        if (bgmUris.isEmpty()) return
-        val next = (_state.value.bgmIndex + 1) % bgmUris.size
-        playBgm(next)
+        try {
+            val mediaItems = sentenceIds.mapNotNull { id ->
+                contentLoader.narrationUri(id)?.let { uri ->
+                    MediaItem.Builder()
+                        .setUri(uri)
+                        .setMediaId(id)
+                        .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setTitle("朗读")
+                                .setArtist("红宝书")
+                                .build()
+                        )
+                        .build()
+                }
+            }
+            
+            if (mediaItems.isEmpty()) return false
+
+            narrationPlayer.setMediaItems(mediaItems, idx, 0L)
+            narrationPlayer.prepare()
+            narrationPlayer.playWhenReady = true
+            
+            _state.update { current ->
+                current.copy(
+                    narrationSentenceId = startId,
+                    narrationPosition = 0L,
+                    narrationPlaying = true,
+                    narrationError = null
+                )
+            }
+            updateForegroundState()
+            return true
+        } catch (e: Exception) {
+            android.util.Log.e("AudioManager", "Error playing list: ${e.message}")
+            return false
+        }
     }
 
     override fun playSentence(sentenceId: String): Boolean {
-        val uri = contentLoader.narrationUri(sentenceId)
-        android.util.Log.d("AudioManager", "playSentence: id=$sentenceId, uri=$uri")
-        if (uri == null) return false
-        
-        // 确保播放器可用
-        ensureNarrationPlayerReady()
-        
-        try {
-            narrationPlayer.setMediaItem(MediaItem.fromUri(uri))
-            narrationPlayer.prepare()
-            narrationPlayer.playWhenReady = true
-            _state.update { current ->
-                current.copy(
-                    narrationSentenceId = sentenceId,
-                    narrationPosition = 0L,
-                    narrationPlaying = true
-                )
-            }
-            return true
-        } catch (e: Exception) {
-            android.util.Log.e("AudioManager", "Error playing sentence: ${e.message}")
-            // 尝试重建播放器后重试一次
-            narrationPlayer.release()
-            narrationPlayer = createNarrationPlayer()
-            try {
-                narrationPlayer.setMediaItem(MediaItem.fromUri(uri))
-                narrationPlayer.prepare()
-                narrationPlayer.playWhenReady = true
-                _state.update { current ->
-                    current.copy(
-                        narrationSentenceId = sentenceId,
-                        narrationPosition = 0L,
-                        narrationPlaying = true
-                    )
-                }
-                return true
-            } catch (e2: Exception) {
-                android.util.Log.e("AudioManager", "Retry failed: ${e2.message}")
-                return false
-            }
-        }
+        return playNarrationList(listOf(sentenceId), 0)
     }
 
     override fun pauseSentence() {
         narrationPlayer.pause()
+        autoAdvancePending = false
         _state.update { current ->
             current.copy(
                 narrationPosition = narrationPlayer.currentPosition,
                 narrationPlaying = false
             )
         }
+        updateForegroundState()
     }
 
     override fun resumeSentence() {
         if (_state.value.narrationSentenceId != null) {
+            autoAdvancePending = false
             narrationPlayer.playWhenReady = true
             _state.update { current ->
-                current.copy(narrationPlaying = true)
+                current.copy(narrationPlaying = true, narrationError = null)
             }
         }
+        updateForegroundState()
     }
 
     override fun stopSentence() {
         narrationPlayer.stop()
+        autoAdvancePending = false
         _state.update { current ->
             current.copy(
                 narrationSentenceId = null,
@@ -244,6 +287,7 @@ class AudioManagerImpl(
                 narrationPlaying = false
             )
         }
+        updateForegroundState()
     }
 
     override fun playFlip() {
@@ -265,20 +309,13 @@ class AudioManagerImpl(
     }
 
     override fun release() {
-        bgmPlayer.release()
         narrationPlayer.release()
         soundPool.release()
-    }
-    override fun setBgmVolume(volume: Float) {
-        val safeVolume = volume.coerceIn(0f, 1f)
-        bgmPlayer.volume = safeVolume
-        _state.update { current ->
-            current.copy(bgmVolume = safeVolume)
-        }
+        playbackServiceController.stop()
     }
 
     override fun setNarrationSpeed(speed: Float) {
-        val safeSpeed = speed.coerceIn(0.5f, 1.5f)
+        val safeSpeed = coerceNarrationSpeed(speed)
         try {
             narrationPlayer.setPlaybackSpeed(safeSpeed)
         } catch (e: Exception) {
@@ -288,4 +325,24 @@ class AudioManagerImpl(
             current.copy(narrationSpeed = safeSpeed)
         }
     }
+
+    override fun activePlayer(): Player? {
+        return when {
+            _state.value.narrationSentenceId != null -> stableNarrationPlayer
+            else -> null
+        }
+    }
+
+    private fun updateForegroundState() {
+        val shouldRun = _state.value.narrationSentenceId != null
+        if (shouldRun) {
+            playbackServiceController.start()
+        } else {
+            playbackServiceController.stop()
+        }
+    }
+}
+
+internal fun coerceNarrationSpeed(speed: Float): Float {
+    return speed.coerceIn(0.75f, 1.25f)
 }

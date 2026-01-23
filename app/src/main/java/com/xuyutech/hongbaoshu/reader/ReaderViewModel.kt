@@ -17,11 +17,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * 四元组数据类
- */
-data class Tuple4<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
-
 class ReaderViewModel(
     application: Application,
     private val contentLoader: ContentLoader,
@@ -52,6 +47,7 @@ class ReaderViewModel(
         get() = _state.value?.narrationEnabled ?: false
     // 延迟播放任务，用于取消之前的延迟
     private var delayedPlayJob: Job? = null
+    private var sleepTimerJob: Job? = null
     // 是否正在手动翻页（用于防止自动播放干扰）
     private var isManualPageTurn = false
     // 上一个播放完成的句子ID(用于防止跨页重复)
@@ -72,39 +68,37 @@ class ReaderViewModel(
             // 在后台线程中执行，不受 UI 生命周期影响
             if (narrationEnabled && !isManualPageTurn) {
                 viewModelScope.launch {
-                    playNextSentenceAfter(completedSentenceId)
+                    handlePageCompleted(completedSentenceId)
                 }
             }
         }
     }
     
     /**
-     * 播放指定句子之后的下一句
+     * 当前页播放完成（列表播完），处理翻页
      */
-    private fun playNextSentenceAfter(completedSentenceId: String) {
+    private fun handlePageCompleted(completedSentenceId: String) {
         lastCompletedSentenceId = completedSentenceId
-        val sentences = _state.value?.currentPageSentenceIds ?: return
-        val idx = sentences.indexOf(completedSentenceId)
         
-        if (idx >= 0 && idx + 1 < sentences.size) {
-            // 当前页还有下一句
-            playSentence(sentences[idx + 1])
+        // 只有当整个列表播完（ExoPlayer 回调时机），才需要翻页
+        // 此时已处于 STATE_ENDED
+        
+        val current = _state.value ?: return
+        val book = current.book ?: return
+        val pageCount = getCachedPages(book.chapters[current.currentChapterIndex].id)?.size ?: return
+        val stopAtChapterEnd = current.narrationStopAtChapterEnd
+        
+        if (current.pageIndex + 1 < pageCount) {
+            // 翻到下一页
+            autoTurnToNextPage(pageCount)
+        } else if (stopAtChapterEnd) {
+            toggleNarration(false)
+        } else if (current.currentChapterIndex + 1 < book.chapters.size) {
+            // 翻到下一章
+            autoTurnToNextPage(pageCount)
         } else {
-            // 当前页读完,需要翻页
-            val current = _state.value ?: return
-            val book = current.book ?: return
-            val pageCount = getCachedPages(book.chapters[current.currentChapterIndex].id)?.size ?: return
-            
-            if (current.pageIndex + 1 < pageCount) {
-                // 翻到下一页
-                autoTurnToNextPage(pageCount)
-            } else if (current.currentChapterIndex + 1 < book.chapters.size) {
-                // 翻到下一章
-                autoTurnToNextPage(pageCount)
-            } else {
-                // 全书读完
-                toggleNarration(false)
-            }
+            // 全书读完
+            toggleNarration(false)
         }
     }
     
@@ -258,7 +252,7 @@ class ReaderViewModel(
         // 检查内存缓存
         val firstChapterKey = cacheKey(book.chapters.first().id, fontSizeLevel, currentWidthPx, currentHeightPx)
         val firstChapterPages = pageCache[firstChapterKey]
-        if (firstChapterPages != null && firstChapterPages.isNotEmpty() && firstChapterPages.first().totalPages > 0) {
+        if (firstChapterPages != null && firstChapterPages.isNotEmpty()) {
             return
         }
         
@@ -275,38 +269,20 @@ class ReaderViewModel(
                 // 构建句子范围映射（朗读功能需要）
                 pageEngine.buildSentenceRanges(chapter)
             }
-            // 验证加载成功
-            val loaded = pageCache[firstChapterKey]
-            if (loaded != null && loaded.isNotEmpty() && loaded.first().totalPages > 0) {
-                return
-            }
+            return
         }
         
         // 磁盘缓存不存在，计算分页
         val config = buildConfig(fontSizeLevel)
-        
-        // 第一遍：计算所有章节的分页，统计总页数
-        val chapterPages = mutableListOf<List<Page>>()
-        var totalPages = 0
-        
-        book.chapters.forEach { chapter ->
-            val pages = pageEngine.paginate(chapter, config, textMeasurer)
-            chapterPages.add(pages)
-            totalPages += pages.size
-        }
-        
-        // 第二遍：更新全书页码并缓存到内存
-        var globalIndex = 0
+
         val diskData = mutableMapOf<String, List<Page>>()
-        book.chapters.forEachIndexed { idx, chapter ->
+        book.chapters.forEach { chapter ->
             val key = cacheKey(chapter.id, fontSizeLevel, currentWidthPx, currentHeightPx)
-            val pages = chapterPages[idx]
-            val updatedPages = pages.map { page ->
-                globalIndex++
-                page.copy(globalIndex = globalIndex, totalPages = totalPages)
-            }
-            pageCache[key] = updatedPages
-            diskData[chapter.id] = updatedPages
+            val pages = pageEngine.paginate(chapter, config, textMeasurer)
+            pageCache[key] = pages
+            diskData[chapter.id] = pages
+
+            pageEngine.buildSentenceRanges(chapter)
         }
         
         // 保存到磁盘
@@ -363,7 +339,8 @@ class ReaderViewModel(
                     currentChapterIndex = cappedChapterIndex,
                     pageIndex = saved.pageIndex,  // 由 UI 层校验
                     isNightMode = saved.isNightMode,
-                    hasShownMenuGuide = saved.hasShownMenuGuide
+                    hasShownMenuGuide = saved.hasShownMenuGuide,
+                    hasShownToolbarHint = saved.hasShownToolbarHint
                 )
                 restoreAudioState(saved)
             }.onFailure { e ->
@@ -385,17 +362,7 @@ class ReaderViewModel(
     private fun restoreAudioState(saved: ProgressState) {
         // 朗读模式默认关闭，不自动恢复朗读状态
         // narrationEnabled 保持 false，用户需要手动打开
-        
-        // 只恢复 BGM 状态
-        if (saved.bgmEnabled) {
-            audioManager.playBgm(saved.bgmIndex)
-        }
-        audioManager.setBgmVolume(saved.bgmVolume)
-        if (saved.bgmEnabled) {
-            audioManager.playBgm(saved.bgmIndex)
-        }
-        audioManager.setBgmVolume(saved.bgmVolume)
-        
+
         // 恢复朗读语速
         audioManager.setNarrationSpeed(saved.narrationSpeed)
     }
@@ -404,34 +371,72 @@ class ReaderViewModel(
         persistState(narrationSentenceId = narrationSentenceId)
     }
 
-    fun toggleBgm(enable: Boolean) {
-        if (enable) audioManager.playBgm() else audioManager.pauseBgm()
-        persistState()
-    }
-
-    fun nextBgm() {
-        audioManager.nextBgm()
-        persistState()
-    }
-
-    fun setBgmVolume(volume: Float) {
-        audioManager.setBgmVolume(volume)
-        persistState()
-    }
-
     fun setNarrationSpeed(speed: Float) {
         audioManager.setNarrationSpeed(speed)
         persistState()
     }
 
+    fun previewNarrationSpeed(speed: Float) {
+        audioManager.setNarrationSpeed(speed)
+    }
+
     fun playSentence(sentenceId: String) {
+        _state.value = _state.value?.copy(lastPlayedSentenceId = sentenceId)
         android.util.Log.d("ReaderViewModel", "playSentence called: $sentenceId")
-        val success = audioManager.playSentence(sentenceId)
+        
+        // 使用列表播放模式：传入当前页所有句子，并从点击的句子开始播放
+        val sentences = _state.value?.currentPageSentenceIds ?: listOf(sentenceId)
+        val startIndex = sentences.indexOf(sentenceId).coerceAtLeast(0)
+        
+        val success = audioManager.playNarrationList(sentences, startIndex)
         android.util.Log.d("ReaderViewModel", "playSentence result: $success")
         if (success) {
             persistState(narrationSentenceId = sentenceId)
         } else {
             showToast("该句子音频缺失")
+        }
+    }
+
+    fun retryLastSentence() {
+        val target = _state.value?.lastPlayedSentenceId ?: return
+        if (!narrationEnabled) {
+            toggleNarration(true)
+        }
+        playSentence(target)
+    }
+
+    fun playNextSentenceManual() {
+        val current = _state.value ?: return
+        val currentId = audioManager.state.value.narrationSentenceId ?: current.lastPlayedSentenceId
+        if (currentId == null) {
+            val first = current.currentPageSentenceIds.firstOrNull() ?: return
+            if (!narrationEnabled) toggleNarration(true)
+            playSentence(first)
+            return
+        }
+        
+        // 在列表模式下，"下一句"通常由 ExoPlayer 自动处理
+        // 但如果是暂停状态下的手动点击下一首，或者当前列表已结束但还没翻页
+        val sentences = current.currentPageSentenceIds
+        val idx = sentences.indexOf(currentId)
+        if (idx >= 0 && idx + 1 < sentences.size) {
+            // 切到下一句
+            if (!narrationEnabled) toggleNarration(true)
+            playSentence(sentences[idx + 1])
+        } else {
+            // 当前页已到底，尝试翻页
+            handlePageCompleted(currentId)
+        }
+    }
+
+    fun playPreviousSentenceManual() {
+        val current = _state.value ?: return
+        val currentId = audioManager.state.value.narrationSentenceId ?: current.lastPlayedSentenceId ?: return
+        val sentences = current.currentPageSentenceIds
+        val idx = sentences.indexOf(currentId)
+        if (idx > 0) {
+            if (!narrationEnabled) toggleNarration(true)
+            playSentence(sentences[idx - 1])
         }
     }
 
@@ -479,8 +484,33 @@ class ReaderViewModel(
         _state.value = _state.value?.copy(narrationEnabled = enabled)
         if (!enabled) {
             stopSentence()
+            clearNarrationTimer()
+            setNarrationStopAtChapterEnd(false)
         }
         // 如果开启，由 UI 层触发播放第一句
+    }
+
+    fun setNarrationStopAtChapterEnd(enabled: Boolean) {
+        val current = _state.value ?: return
+        _state.value = current.copy(narrationStopAtChapterEnd = enabled)
+    }
+
+    fun startNarrationTimer(minutes: Int) {
+        val current = _state.value ?: return
+        val safeMinutes = minutes.coerceAtLeast(1)
+        _state.value = current.copy(narrationTimerMinutes = safeMinutes)
+        sleepTimerJob?.cancel()
+        sleepTimerJob = viewModelScope.launch {
+            delay(safeMinutes * 60_000L)
+            toggleNarration(false)
+        }
+    }
+
+    fun clearNarrationTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        val current = _state.value ?: return
+        _state.value = current.copy(narrationTimerMinutes = null)
     }
 
     /**
@@ -530,11 +560,9 @@ class ReaderViewModel(
                     narrationSentenceId = narrationSentenceId
                         ?: audioManager.state.value.narrationSentenceId,
                     narrationPosition = audioManager.state.value.narrationPosition,
-                    bgmIndex = audioManager.state.value.bgmIndex,
-                    bgmEnabled = audioManager.state.value.bgmEnabled,
-                    bgmVolume = audioManager.state.value.bgmVolume,
                     isNightMode = current.isNightMode,
                     hasShownMenuGuide = current.hasShownMenuGuide,
+                    hasShownToolbarHint = current.hasShownToolbarHint,
                     narrationSpeed = audioManager.state.value.narrationSpeed
                 )
             )
@@ -653,5 +681,18 @@ class ReaderViewModel(
     fun dismissMenuGuideInSession() {
         val current = _state.value ?: return
         _state.value = current.copy(isMenuGuideDismissedInSession = true)
+    }
+
+    fun markToolbarHintShown() {
+        val current = _state.value ?: return
+        if (!current.hasShownToolbarHint) {
+            _state.value = current.copy(hasShownToolbarHint = true)
+            persistState()
+        }
+    }
+
+    fun dismissToolbarHintInSession() {
+        val current = _state.value ?: return
+        _state.value = current.copy(isToolbarHintDismissedInSession = true)
     }
 }

@@ -3,9 +3,17 @@ package com.xuyutech.hongbaoshu.reader
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.semantics.contentDescription
@@ -21,8 +29,11 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -39,6 +50,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -55,8 +67,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -68,16 +82,32 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import com.xuyutech.hongbaoshu.audio.AudioManager
 import com.xuyutech.hongbaoshu.data.Chapter
 import com.xuyutech.hongbaoshu.data.ParagraphType
+import kotlin.math.roundToInt
+
+data class ToolBarState(
+    val isVisible: Boolean = false,
+    val isInteracting: Boolean = false,
+    val lastInteractionTs: Long = 0L,
+    val autoHideMs: Long = 3000L
+)
 
 
 @Composable
@@ -89,7 +119,10 @@ fun ReaderScreen(
     val state = viewModel.state.observeAsState(ReaderState())
     val audioState = audioManager.state.collectAsState()
     val showToc = remember { mutableStateOf(false) }
-    val showMenu = remember { mutableStateOf(false) }
+    val showNarrationPanel = remember { mutableStateOf(false) }
+    val toolbarState = remember { mutableStateOf(ToolBarState()) }
+    var suppressNextCenterTap by remember { mutableStateOf(false) }
+    var showToolbarHint by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
@@ -98,6 +131,9 @@ fun ReaderScreen(
     var activeTooltipSentenceId by remember { mutableStateOf<String?>(null) }
     // Clicked sentence for highlighting (same style as narration)
     var clickedSentenceId by remember { mutableStateOf<String?>(null) }
+
+    // Manual tap signal for SwipeablePageContainer (from Text component)
+    val manualTapSignal = remember { kotlinx.coroutines.flow.MutableSharedFlow<androidx.compose.ui.geometry.Offset>(extraBufferCapacity = 1) }
     
     // Auto-dismiss tooltip after 3 seconds
     LaunchedEffect(activeTooltipSentenceId) {
@@ -113,6 +149,67 @@ fun ReaderScreen(
         state.value.toastMessage?.let { message ->
             snackbarHostState.showSnackbar(message)
             viewModel.clearToast()
+        }
+    }
+
+    val updateToolbarInteraction = {
+        toolbarState.value = toolbarState.value.copy(
+            isVisible = true,
+            lastInteractionTs = System.currentTimeMillis()
+        )
+    }
+
+    val hideToolbar = {
+        toolbarState.value = toolbarState.value.copy(
+            isVisible = false,
+            isInteracting = false,
+            lastInteractionTs = System.currentTimeMillis()
+        )
+        showNarrationPanel.value = false
+    }
+
+    val openNarrationPanel = {
+        toolbarState.value = toolbarState.value.copy(
+            isVisible = true,
+            isInteracting = true,
+            lastInteractionTs = System.currentTimeMillis()
+        )
+        showNarrationPanel.value = true
+    }
+
+    val shouldShowToolbarHint = !state.value.hasShownToolbarHint &&
+        !state.value.isToolbarHintDismissedInSession &&
+        !state.value.isLoading &&
+        state.value.error == null
+
+    LaunchedEffect(
+        toolbarState.value.isVisible,
+        toolbarState.value.lastInteractionTs,
+        toolbarState.value.isInteracting
+    ) {
+        val current = toolbarState.value
+        if (current.isVisible && !current.isInteracting) {
+            val token = current.lastInteractionTs
+            delay(current.autoHideMs)
+            val latest = toolbarState.value
+            if (latest.isVisible && !latest.isInteracting && latest.lastInteractionTs == token) {
+                toolbarState.value = latest.copy(isVisible = false)
+            }
+        }
+    }
+
+    LaunchedEffect(shouldShowToolbarHint) {
+        if (shouldShowToolbarHint) {
+            showToolbarHint = true
+            viewModel.markToolbarHintShown()
+            delay(3000)
+            showToolbarHint = false
+        }
+    }
+
+    LaunchedEffect(toolbarState.value.isVisible) {
+        if (toolbarState.value.isVisible) {
+            showToolbarHint = false
         }
     }
 
@@ -245,15 +342,6 @@ fun ReaderScreen(
             }
         }
         
-        // 直接从 Page 中读取全书页码（分页时已计算好）
-        val currentPage = currentPages.getOrNull(currentPageIndex)
-        val globalPageInfo = if (currentPage != null && currentPage.totalPages > 0) {
-            Pair(currentPage.globalIndex, currentPage.totalPages)
-        } else {
-            // 分页未完成时显示占位
-            Pair(0, 0)
-        }
-        
         // 获取当前页面的句子列表（用于朗读）
         val currentPageSentences = remember(currentChapter, currentPages, currentPageIndex) {
             if (currentChapter == null || currentPages.isEmpty()) emptyList()
@@ -341,41 +429,42 @@ fun ReaderScreen(
                             }
                         },
                         onCenterTap = {
-                            // 菜单打开时，点击中间区域关闭菜单
-                            if (showMenu.value) {
-                                showMenu.value = false
+                            if (suppressNextCenterTap) {
+                                suppressNextCenterTap = false
+                                return@SwipeablePageContainer
+                            }
+                            if (toolbarState.value.isVisible) {
+                                hideToolbar()
+                                showNarrationPanel.value = false
+                            } else {
+                                updateToolbarInteraction()
                             }
                             // 点击任何位置都尝试关闭 Tooltip 和清除高亮
                             activeTooltipSentenceId = null
                             clickedSentenceId = null
                         },
+                        onTopDoubleTap = {
+                            updateToolbarInteraction()
+                        },
                         onDragStart = {
                             activeTooltipSentenceId = null
                             clickedSentenceId = null
                         },
-                        onTopDoubleTap = {
-                            if (!showMenu.value) {
-                                showMenu.value = true
-                                viewModel.dismissMenuGuide()
-                            }
-                        }
+                        manualTapSignal = manualTapSignal
                     ) { pageIndexToRender ->
-                        val (targetChapter, targetPage, targetGlobalPage, targetTotalPages) = 
+                        val (targetChapter, targetPage) =
                             getPageByIndex(
                                 book = book,
                                 currentChapterIndex = currentChapterIndex,
                                 currentPages = currentPages,
                                 prevChapterPages = prevChapterPages,
                                 pageIndexToRender = pageIndexToRender,
-                                viewModel = viewModel,
-                                pageConfig = pageConfig,
-                                textMeasurer = textMeasurer
+                                viewModel = viewModel
                             ) ?: return@SwipeablePageContainer
                         
                         PageContent(
                             chapter = targetChapter,
                             page = targetPage,
-                            globalPageInfo = Pair(targetGlobalPage, targetTotalPages),
                             currentNarrationId = if (pageIndexToRender == currentPageIndex) currentNarrationId else null,
                             fontSizeLevel = fontSizeLevel,
                             textStyle = textStyle,
@@ -388,6 +477,10 @@ fun ReaderScreen(
                             onTooltipRequest = { id -> 
                                 activeTooltipSentenceId = id
                                 clickedSentenceId = id
+                                suppressNextCenterTap = true
+                            },
+                            onSingleTap = { offset ->
+                                manualTapSignal.tryEmit(offset)
                             },
                             onPlayNarration = { id ->
                                 activeTooltipSentenceId = null
@@ -402,72 +495,153 @@ fun ReaderScreen(
                 }
             }
 
-
-
-            // 用户引导弹窗
-            val shouldShowGuide = !state.value.hasShownMenuGuide && 
-                                  !state.value.isMenuGuideDismissedInSession &&
-                                  !state.value.isLoading &&
-                                  state.value.error == null
-
-            if (shouldShowGuide) {
-                MenuGuideDialog(
-                    onDismiss = { viewModel.dismissMenuGuideInSession() },
-                    onNeverShowAgain = { viewModel.dismissMenuGuide() }
+            AnimatedVisibility(
+                visible = toolbarState.value.isVisible,
+                enter = slideInVertically { -it },
+                exit = slideOutVertically { -it },
+                modifier = Modifier.align(Alignment.TopCenter)
+            ) {
+                ReaderTopBar(
+                    title = book?.title ?: "",
+                    chapterTitle = currentChapter?.title ?: "",
+                    onBack = {
+                        updateToolbarInteraction()
+                        if (state.value.narrationEnabled) {
+                            viewModel.pauseNarration()
+                        }
+                        onBack()
+                    }
                 )
             }
-            
-            // 下拉菜单（带遮罩层）
-            if (showMenu.value) {
-                // 遮罩层：点击或滑动菜单以外区域关闭菜单
+
+            val playPauseIcon = if (audioState.value.narrationPlaying) {
+                androidx.compose.material.icons.Icons.Default.Pause
+            } else {
+                androidx.compose.material.icons.Icons.Default.PlayArrow
+            }
+            val playPauseLabel = if (audioState.value.narrationPlaying) {
+                "暂停"
+            } else {
+                "播放"
+            }
+
+            AnimatedVisibility(
+                visible = toolbarState.value.isVisible && !showNarrationPanel.value,
+                enter = slideInVertically { it },
+                exit = slideOutVertically { it },
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                ReaderBottomBar(
+                    onOpenToc = {
+                        updateToolbarInteraction()
+                        showToc.value = true
+                    },
+                    onPlayPause = {
+                        updateToolbarInteraction()
+                        if (!state.value.narrationEnabled) {
+                            viewModel.toggleNarration(true)
+                        }
+                        if (audioState.value.narrationSentenceId == null) {
+                            viewModel.playNextSentenceManual()
+                        } else {
+                            viewModel.pauseOrResumeSentence()
+                        }
+                    },
+                    playPauseIcon = playPauseIcon,
+                    playPauseLabel = playPauseLabel,
+                    onOpenNarrationPanel = {
+                        updateToolbarInteraction()
+                        openNarrationPanel()
+                    },
+                    isNightMode = state.value.isNightMode,
+                    onToggleNightMode = {
+                        updateToolbarInteraction()
+                        viewModel.toggleNightMode()
+                    }
+                )
+            }
+
+            if (showNarrationPanel.value) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .pointerInput(Unit) {
-                            detectTapGestures { showMenu.value = false }
-                        }
-                        .pointerInput(Unit) {
-                            detectVerticalDragGestures { _, _ -> showMenu.value = false }
+                            detectTapGestures { hideToolbar() }
                         }
                 )
             }
-            
             AnimatedVisibility(
-                visible = showMenu.value,
-                enter = slideInVertically { -it },
-                exit = slideOutVertically { -it }
+                visible = showNarrationPanel.value,
+                enter = slideInVertically { it },
+                exit = slideOutVertically { it },
+                modifier = Modifier.align(Alignment.BottomCenter)
             ) {
-                MenuPanel(
+                NarrationPanel(
                     audioState = audioState.value,
-                    onBgmToggle = { viewModel.toggleBgm(it) },
-                    onBgmNext = { viewModel.nextBgm() },
-                    onBgmVolumeChange = { viewModel.setBgmVolume(it) },
-                    onShowToc = { 
-                        showToc.value = true 
-                        // 如果在引导显示时打开了目录（也是通过菜单打开的），也应该关闭引导
-                        viewModel.dismissMenuGuide()
-                    },
                     narrationEnabled = state.value.narrationEnabled,
-                    onNarrationToggle = { enabled ->
-                        viewModel.toggleNarration(enabled)
-                        // 开启朗读时播放当前页第一句
-                        // 使用 state 中的句子列表，确保数据已同步
-                        if (enabled) {
-                            val sentences = state.value.currentPageSentenceIds.ifEmpty { currentPageSentences }
-                            if (sentences.isNotEmpty()) {
-                                viewModel.playSentence(sentences.first())
-                            }
+                    narrationTimerMinutes = state.value.narrationTimerMinutes,
+                    narrationStopAtChapterEnd = state.value.narrationStopAtChapterEnd,
+                    onPlayPause = {
+                        updateToolbarInteraction()
+                        if (!state.value.narrationEnabled) {
+                            viewModel.toggleNarration(true)
+                        }
+                        if (audioState.value.narrationSentenceId == null) {
+                            viewModel.playNextSentenceManual()
+                        } else {
+                            viewModel.pauseOrResumeSentence()
                         }
                     },
-                    onNarrationSpeedChange = { viewModel.setNarrationSpeed(it) },
-                    fontSizeLevel = state.value.fontSizeLevel,
-                    onFontSizeChange = { level -> viewModel.setFontSize(level) },
-                    onDismiss = { showMenu.value = false },
-                    onToggleNightMode = { viewModel.toggleNightMode() },
-                    isNightMode = state.value.isNightMode
+                    onPrev = {
+                        updateToolbarInteraction()
+                        viewModel.playPreviousSentenceManual()
+                    },
+                    onNext = {
+                        updateToolbarInteraction()
+                        viewModel.playNextSentenceManual()
+                    },
+                    onSpeedPreview = {
+                        updateToolbarInteraction()
+                        viewModel.previewNarrationSpeed(it)
+                    },
+                    onSpeedCommit = {
+                        updateToolbarInteraction()
+                        viewModel.setNarrationSpeed(it)
+                    },
+                    onTimerStart = {
+                        updateToolbarInteraction()
+                        viewModel.setNarrationStopAtChapterEnd(false)
+                        viewModel.startNarrationTimer(it)
+                    },
+                    onStopAtChapterEnd = {
+                        updateToolbarInteraction()
+                        viewModel.clearNarrationTimer()
+                        viewModel.setNarrationStopAtChapterEnd(true)
+                    },
+                    onTimerClear = {
+                        updateToolbarInteraction()
+                        viewModel.clearNarrationTimer()
+                        viewModel.setNarrationStopAtChapterEnd(false)
+                    },
+                    onRetry = {
+                        updateToolbarInteraction()
+                        viewModel.retryLastSentence()
+                    },
+                    onDismiss = { hideToolbar() }
                 )
             }
 
+
+
+            if (showToolbarHint) {
+                ToolbarHint(
+                    onDismissSession = {
+                        showToolbarHint = false
+                        viewModel.dismissToolbarHintInSession()
+                    }
+                )
+            }
+            
             if (showToc.value) {
                 TocDialog(
                     titles = state.value.book?.chapters?.map { it.title } ?: emptyList(),
@@ -475,7 +649,7 @@ fun ReaderScreen(
                     onSelect = {
                         viewModel.selectChapter(it)
                         showToc.value = false
-                        showMenu.value = false
+                        hideToolbar()
                     },
                     onDismiss = { showToc.value = false }
                 )
@@ -490,46 +664,42 @@ fun ReaderScreen(
     }
     }
 }
-/**
- * 用户引导弹窗
- */
 @Composable
-private fun MenuGuideDialog(
-    onDismiss: () -> Unit,
-    onNeverShowAgain: () -> Unit
+private fun ToolbarHint(
+    onDismissSession: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { 
-            Text(
-                text = "操作提示",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            ) 
-        },
-        text = {
-            Text(
-                text = "双击屏幕顶部区域可唤出菜单，进行目录跳转、夜间模式切换等操作。",
-                style = MaterialTheme.typography.bodyMedium
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onNeverShowAgain) {
-                Text("不再提醒")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("我知道了")
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 24.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        androidx.compose.material3.Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.inverseSurface,
+            shadowElevation = 6.dp
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "单击中间区域唤出工具栏",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.inverseOnSurface
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                TextButton(onClick = onDismissSession) {
+                    Text("本次不再显示")
+                }
             }
         }
-    )
+    }
 }
 
 
 /**
  * 根据页码索引获取页面数据（支持跨章节预览）
- * 返回：(章节, 页面, 全书页码, 全书总页数)
  */
 private fun getPageByIndex(
     book: com.xuyutech.hongbaoshu.data.Book,
@@ -537,348 +707,427 @@ private fun getPageByIndex(
     currentPages: List<Page>,
     prevChapterPages: List<Page>,
     pageIndexToRender: Int,
-    viewModel: ReaderViewModel,
-    pageConfig: PageConfig,
-    textMeasurer: androidx.compose.ui.text.TextMeasurer
-): Tuple4<Chapter, Page, Int, Int>? {
+    viewModel: ReaderViewModel
+): Pair<Chapter, Page>? {
     return when {
         // 上一章最后一页
         pageIndexToRender < 0 && currentChapterIndex > 0 -> {
             val prevChapter = book.chapters[currentChapterIndex - 1]
             val page = prevChapterPages.lastOrNull() ?: return null
-            // 直接使用 page 中的全书页码
-            Tuple4(prevChapter, page, page.globalIndex, page.totalPages)
+            prevChapter to page
         }
         // 下一章第一页
         pageIndexToRender >= currentPages.size && currentChapterIndex < book.chapters.lastIndex -> {
             val nextChapter = book.chapters[currentChapterIndex + 1]
             val nextPages = viewModel.getCachedPages(nextChapter.id) ?: return null
             val page = nextPages.firstOrNull() ?: return null
-            // 直接使用 page 中的全书页码
-            Tuple4(nextChapter, page, page.globalIndex, page.totalPages)
+            nextChapter to page
         }
         // 当前章节内
         pageIndexToRender in currentPages.indices -> {
             val chapter = book.chapters[currentChapterIndex]
             val page = currentPages[pageIndexToRender]
-            // 直接使用 page 中的全书页码
-            Tuple4(chapter, page, page.globalIndex, page.totalPages)
+            chapter to page
         }
         else -> null
     }
 }
 
-
-
 @Composable
-private fun MenuPanel(
-    audioState: com.xuyutech.hongbaoshu.audio.AudioState,
-    onBgmToggle: (Boolean) -> Unit,
-    onBgmNext: () -> Unit,
-    onBgmVolumeChange: (Float) -> Unit,
-    onShowToc: () -> Unit,
-    narrationEnabled: Boolean,
-    onNarrationToggle: (Boolean) -> Unit,
-    onNarrationSpeedChange: (Float) -> Unit,
-    fontSizeLevel: Int,
-    onFontSizeChange: (Int) -> Unit,
-    onDismiss: () -> Unit,
-    onToggleNightMode: () -> Unit,
-    isNightMode: Boolean
+private fun ReaderTopBar(
+    title: String,
+    chapterTitle: String,
+    onBack: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                MaterialTheme.colorScheme.surfaceContainerLow,
-                RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp)
-            )
-            .pointerInput(Unit) {
-                detectVerticalDragGestures { _, dragAmount ->
-                    if (dragAmount < -20) onDismiss()
-                }
-            }
-            .padding(16.dp)
-            .padding(top = 8.dp) // Extra clear space for status bar
+    androidx.compose.material3.Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shadowElevation = 0.dp,
+        tonalElevation = 2.dp
     ) {
-        // Drag Handle
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 16.dp),
-            contentAlignment = Alignment.Center
+                .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars)
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            androidx.compose.material3.IconButton(onClick = onBack) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回"
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 8.dp)
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    fontWeight = FontWeight.SemiBold
+                )
+                if (chapterTitle.isNotEmpty()) {
+                    Text(
+                        text = chapterTitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderBottomBar(
+    onOpenToc: () -> Unit,
+    onPlayPause: () -> Unit,
+    playPauseIcon: androidx.compose.ui.graphics.vector.ImageVector,
+    playPauseLabel: String,
+    onOpenNarrationPanel: () -> Unit,
+    isNightMode: Boolean,
+    onToggleNightMode: () -> Unit
+) {
+    androidx.compose.material3.Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shadowElevation = 8.dp,
+        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 12.dp)
+                .padding(bottom = 8.dp), // Extra padding for navigation bar if needed, or just visual balance
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BottomBarAction(
+                icon = androidx.compose.material.icons.Icons.Default.Menu,
+                label = "目录",
+                onClick = onOpenToc
+            )
+            BottomBarAction(
+                icon = playPauseIcon,
+                label = playPauseLabel,
+                onClick = onPlayPause
+            )
+            BottomBarAction(
+                icon = androidx.compose.material.icons.Icons.Default.Info,
+                label = "朗读",
+                onClick = onOpenNarrationPanel
+            )
+            BottomBarAction(
+                icon = if (isNightMode) {
+                    androidx.compose.material.icons.Icons.Filled.LightMode
+                } else {
+                    androidx.compose.material.icons.Icons.Filled.DarkMode
+                },
+                label = if (isNightMode) "日间" else "夜间",
+                onClick = onToggleNightMode
+            )
+        }
+    }
+}
+
+@Composable
+private fun BottomBarAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.clickable(onClick = onClick)
+    ) {
+        androidx.compose.material3.Icon(
+            imageVector = icon,
+            contentDescription = label,
+            modifier = Modifier.size(26.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun NarrationPanel(
+    audioState: com.xuyutech.hongbaoshu.audio.AudioState,
+    narrationEnabled: Boolean,
+    narrationTimerMinutes: Int?,
+    narrationStopAtChapterEnd: Boolean,
+    onPlayPause: () -> Unit,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    onSpeedPreview: (Float) -> Unit,
+    onSpeedCommit: (Float) -> Unit,
+    onTimerStart: (Int) -> Unit,
+    onStopAtChapterEnd: () -> Unit,
+    onTimerClear: () -> Unit,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.material3.Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shadowElevation = 16.dp,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Drag Handle
             Box(
                 modifier = Modifier
                     .width(32.dp)
                     .height(4.dp)
                     .background(
                         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                        RoundedCornerShape(2.dp)
+                        androidx.compose.foundation.shape.CircleShape
                     )
             )
-        }
+            Spacer(modifier = Modifier.height(24.dp))
 
-        // Quick Actions Row (TOC + Night Mode)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "阅读设置",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-            
-            androidx.compose.material3.OutlinedButton(
-                onClick = onShowToc,
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp)
+            // Title & Status
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
             ) {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Default.Menu,
-                    contentDescription = "目录",
-                    modifier = Modifier.size(18.dp)
+                Column {
+                    Text(
+                        text = "朗读",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    val status = when {
+                        !narrationEnabled -> "未开启"
+                        audioState.narrationPlaying -> "正在播放"
+                        audioState.narrationSentenceId != null -> "已暂停"
+                        else -> "准备就绪"
+                    }
+                    Text(
+                        text = status,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                
+                androidx.compose.material3.IconButton(onClick = onDismiss) {
+                     androidx.compose.material3.Icon(
+                         imageVector = androidx.compose.material.icons.Icons.Default.Close,
+                         contentDescription = "关闭"
+                     )
+                }
+            }
+            
+            if (audioState.narrationError != null) {
+                Text(
+                    text = audioState.narrationError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 8.dp)
                 )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("目录")
+                TextButton(onClick = onRetry) {
+                    Text("重试")
+                }
             }
-        }
 
-        // Audio Control Card
-        androidx.compose.material3.Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            colors = androidx.compose.material3.CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                // Section Title
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(bottom = 12.dp)
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Playback Controls
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Prev
+                androidx.compose.material3.FilledTonalIconButton(
+                    onClick = onPrev,
+                    modifier = Modifier.size(48.dp),
+                    colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                    )
                 ) {
                     androidx.compose.material3.Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        "听书 & 音效",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        imageVector = androidx.compose.material.icons.Icons.Default.SkipPrevious,
+                        contentDescription = "上一句"
                     )
                 }
 
-                // Narration Row
+                // Play/Pause (Big)
+                androidx.compose.material3.FilledIconButton(
+                    onClick = onPlayPause,
+                    modifier = Modifier.size(72.dp)
+                ) {
+                    androidx.compose.material3.Icon(
+                        imageVector = if (audioState.narrationPlaying) {
+                            androidx.compose.material.icons.Icons.Default.Pause
+                        } else {
+                            androidx.compose.material.icons.Icons.Default.PlayArrow
+                        },
+                        contentDescription = "播放暂停",
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+
+                // Next
+                androidx.compose.material3.FilledTonalIconButton(
+                    onClick = onNext,
+                    modifier = Modifier.size(48.dp),
+                    colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                    )
+                ) {
+                    androidx.compose.material3.Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Default.SkipNext,
+                        contentDescription = "下一句"
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Speed Control
+            Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text("朗读模式", style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            "自动播放章节内容",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = narrationEnabled,
-                        onCheckedChange = onNarrationToggle
+                    Text(
+                        text = "语速",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Text(
+                        text = String.format(java.util.Locale.US, "%.2fx", audioState.narrationSpeed),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                val minSpeed = 0.75f
+                val maxSpeed = 1.25f
+                val step = 0.05f
+                val steps = (((maxSpeed - minSpeed) / step).toInt() - 1).coerceAtLeast(0)
+                var sliderValue by remember { mutableStateOf(audioState.narrationSpeed) }
+                LaunchedEffect(audioState.narrationSpeed) {
+                    sliderValue = audioState.narrationSpeed
+                }
+                
+                Slider(
+                    value = sliderValue.coerceIn(minSpeed, maxSpeed),
+                    onValueChange = { raw ->
+                        val stepsFromMin = ((raw.coerceIn(minSpeed, maxSpeed) - minSpeed) / step).roundToInt()
+                        val snapped = (minSpeed + stepsFromMin * step).coerceIn(minSpeed, maxSpeed)
+                        sliderValue = snapped
+                        onSpeedPreview(snapped)
+                    },
+                    onValueChangeFinished = {
+                        onSpeedCommit(sliderValue.coerceIn(minSpeed, maxSpeed))
+                    },
+                    valueRange = minSpeed..maxSpeed,
+                    steps = steps
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(24.dp))
 
-                // 语速调节 Section
-                if (narrationEnabled) {
-                    androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-                    
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+            // Timer Control
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "定时关闭",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    if (narrationTimerMinutes != null || narrationStopAtChapterEnd) {
+                        TextButton(
+                            onClick = onTimerClear,
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                            modifier = Modifier.height(24.dp)
                         ) {
-                            Text(
-                                text = "朗读语速",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = "%.1fx".format(audioState.narrationSpeed),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            Text("关闭定时")
                         }
-                        
-                        androidx.compose.material3.Slider(
-                            value = audioState.narrationSpeed,
-                            onValueChange = onNarrationSpeedChange,
-                            valueRange = 0.5f..1.5f,
-                            steps = 0, // 连续滑动
-                            modifier = Modifier.fillMaxWidth()
-                        )
                     }
                 }
+                Spacer(modifier = Modifier.height(12.dp))
                 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                // BGM Row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column {
-                        Text("背景白噪音", style = MaterialTheme.typography.bodyLarge)
-                        if (audioState.bgmEnabled) {
-                            Text(
-                                "正在播放",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
+                    val timerOptions = listOf(15, 30, 60)
+                    timerOptions.forEach { minutes ->
+                        val selected = narrationTimerMinutes == minutes && !narrationStopAtChapterEnd
+                        TimerChip(
+                            label = "${minutes}分钟",
+                            selected = selected,
+                            onClick = { onTimerStart(minutes) },
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                     
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(
-                            checked = audioState.bgmEnabled,
-                            onCheckedChange = onBgmToggle
-                        )
-                        if (audioState.bgmEnabled) {
-                            Spacer(modifier = Modifier.width(12.dp))
-                            androidx.compose.material3.FilledTonalIconButton(
-                                onClick = onBgmNext,
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                androidx.compose.material3.Icon(
-                                    imageVector = androidx.compose.material.icons.Icons.Default.ArrowForward,
-                                    contentDescription = "下一首",
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // BGM Volume Slider
-                if (audioState.bgmEnabled) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        androidx.compose.material3.Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Default.Settings, // Should change to Volume icon but standard set limitations
-                            contentDescription = "Vol",
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Slider(
-                            value = audioState.bgmVolume,
-                            onValueChange = onBgmVolumeChange,
-                            valueRange = 0f..1f,
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(horizontal = 12.dp)
-                        )
-                    }
-                }
-            }
-        }
-
-        // Appearance Card
-        androidx.compose.material3.Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            colors = androidx.compose.material3.CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                ) {
-                    androidx.compose.material3.Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Default.Settings,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        "显示设置",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                // Night Mode Row
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("夜间模式", style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            "启用深色主题",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        modifier = Modifier.semantics { contentDescription = "夜间模式开关" },
-                        checked = isNightMode,
-                        onCheckedChange = { onToggleNightMode() }
-                    )
-                }
-                
-                HorizontalDivider(modifier = Modifier.padding(bottom = 12.dp))
-
-                // Font Size Slider
-                var sliderValue by remember(fontSizeLevel) { androidx.compose.runtime.mutableFloatStateOf(fontSizeLevel.toFloat()) }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "小",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Slider(
-                        value = sliderValue,
-                        onValueChange = { sliderValue = it },
-                        onValueChangeFinished = { onFontSizeChange(sliderValue.toInt()) },
-                        valueRange = 0f..4f,
-                        steps = 3,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 12.dp)
-                    )
-                    Text(
-                        "大",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    val endChapterSelected = narrationStopAtChapterEnd
+                    TimerChip(
+                        label = "读完本章",
+                        selected = endChapterSelected,
+                        onClick = onStopAtChapterEnd,
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
+            
+            // Safe area spacing
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }
+
+@Composable
+private fun TimerChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    androidx.compose.material3.Surface(
+        onClick = onClick,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        border = if (selected) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = modifier.height(36.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1
+            )
+        }
+    }
+}
+
 
 
 @Composable
@@ -898,35 +1147,84 @@ private fun TocDialog(
             ) 
         },
         text = {
-            LazyColumn {
-                items(titles.indices.toList()) { idx ->
-                    val isSelected = idx == currentIndex
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                                else Color.Transparent,
-                                RoundedCornerShape(8.dp)
-                            )
-                            .clickable { onSelect(idx) }
-                            .padding(horizontal = 12.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+            var query by remember { mutableStateOf("") }
+            val normalizedQuery = query.trim()
+            val filteredIndices = remember(titles, normalizedQuery) {
+                if (normalizedQuery.isEmpty()) {
+                    titles.indices.toList()
+                } else {
+                    titles.indices.filter { idx ->
+                        titles[idx].contains(normalizedQuery, ignoreCase = true)
+                    }
+                }
+            }
+            Column(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text("搜索章节") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { onSelect(currentIndex) }) {
+                        Text("回到当前进度")
+                    }
+                    Text(
+                        text = "当前第 ${currentIndex + 1} 章",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                if (filteredIndices.isEmpty()) {
+                    Text(
+                        text = "暂无匹配章节",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 16.dp)
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 420.dp)
                     ) {
-                        Text(
-                            text = "${idx + 1}.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (isSelected) MaterialTheme.colorScheme.primary 
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.width(32.dp)
-                        )
-                        Text(
-                            text = titles[idx],
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (isSelected) MaterialTheme.colorScheme.primary 
-                                    else MaterialTheme.colorScheme.onSurface,
-                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
-                        )
+                        items(filteredIndices) { idx ->
+                            val isSelected = idx == currentIndex
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(
+                                        if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                                        else Color.Transparent,
+                                        RoundedCornerShape(8.dp)
+                                    )
+                                    .clickable { onSelect(idx) }
+                                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${idx + 1}.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary 
+                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.width(32.dp)
+                                )
+                                Text(
+                                    text = titles[idx],
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary 
+                                            else MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -944,7 +1242,6 @@ private fun TocDialog(
 private fun PageContent(
     chapter: Chapter,
     page: Page,
-    globalPageInfo: Pair<Int, Int>,
     currentNarrationId: String?,
     fontSizeLevel: Int,
     textStyle: TextStyle,
@@ -955,6 +1252,7 @@ private fun PageContent(
     activeTooltipSentenceId: String?,
     clickedSentenceId: String?,
     onTooltipRequest: (String) -> Unit,
+    onSingleTap: (androidx.compose.ui.geometry.Offset) -> Unit,
     onPlayNarration: (String) -> Unit
 ) {
     val density = LocalDensity.current
@@ -1008,6 +1306,7 @@ private fun PageContent(
                         annotationSpacingDp = annotationSpacingDp,
                         pageEngine = pageEngine,
                         onTextTap = { _, id -> onTooltipRequest(id) },
+                        onSingleTap = onSingleTap,
                         activeTooltipSentenceId = activeTooltipSentenceId,
                         clickedSentenceId = clickedSentenceId,
                         onPlayNarration = onPlayNarration
@@ -1015,17 +1314,6 @@ private fun PageContent(
                 }
             }
         }
-        // 页码指示
-        Text(
-            text = "${globalPageInfo.first} / ${globalPageInfo.second}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 16.dp),
-            textAlign = TextAlign.Center
-        )
     }
 }
 
@@ -1055,10 +1343,12 @@ private fun SliceContent(
     annotationSpacingDp: androidx.compose.ui.unit.Dp,
     pageEngine: PageEngine,
     onTextTap: (androidx.compose.ui.geometry.Offset, String) -> Unit,
+    onSingleTap: (androidx.compose.ui.geometry.Offset) -> Unit,
     activeTooltipSentenceId: String?,
     clickedSentenceId: String?,
     onPlayNarration: (String) -> Unit
 ) {
+    val viewConfiguration = LocalViewConfiguration.current
     val isText = slice.paragraphType == ParagraphType.text
     val spacing = if (slice.isLastSlice) {
         if (isText) textParagraphSpacingDp else annotationSpacingDp
@@ -1124,31 +1414,41 @@ private fun SliceContent(
             var textLayoutResult by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
             var localClickedCharOffset by remember { mutableStateOf<Int?>(null) }
             var localClickedSentenceId by remember { mutableStateOf<String?>(null) }
+            var elementPosition by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
             
+            val handleSentencePress: (androidx.compose.ui.geometry.Offset) -> Unit = { pos ->
+                textLayoutResult?.let { layoutResult ->
+                    val offset = layoutResult.getOffsetForPosition(pos)
+                    val paragraphCharIndex = slice.startChar + offset
+                    if (sentenceRanges != null) {
+                        val sentenceIdx = sentenceRanges.indexOfFirst { range ->
+                            paragraphCharIndex in range
+                        }
+                        if (sentenceIdx >= 0 && sentenceIdx < paragraph.sentences.size) {
+                            val sentence = paragraph.sentences[sentenceIdx]
+                            onTextTap(pos, sentence.id)
+                            localClickedCharOffset = offset
+                            localClickedSentenceId = sentence.id
+                        }
+                    }
+                }
+            }
+
             Text(
                 text = annotatedText,
                 style = finalStyle,
                 modifier = Modifier
                     .padding(bottom = spacing)
+                    .onGloballyPositioned { elementPosition = it.positionInRoot() }
                     .pointerInput(Unit) {
-                        detectTapGestures { pos ->
-                            textLayoutResult?.let { layoutResult ->
-                                val offset = layoutResult.getOffsetForPosition(pos)
-                                val paragraphCharIndex = slice.startChar + offset
-                                if (sentenceRanges != null) {
-                                    val sentenceIdx = sentenceRanges.indexOfFirst { range ->
-                                        paragraphCharIndex in range
-                                    }
-                                    if (sentenceIdx >= 0 && sentenceIdx < paragraph.sentences.size) {
-                                        val sentence = paragraph.sentences[sentenceIdx]
-                                        onTextTap(pos, sentence.id)
-                                        // Store the character offset for accurate positioning
-                                        localClickedCharOffset = offset
-                                        localClickedSentenceId = sentence.id
-                                    }
-                                }
+                        detectTapGestures(
+                            onDoubleTap = { offset ->
+                                handleSentencePress(offset)
+                            },
+                            onTap = { offset ->
+                                onSingleTap(elementPosition + offset)
                             }
-                        }
+                        )
                     },
                 onTextLayout = { textLayoutResult = it }
             )

@@ -12,7 +12,6 @@ import android.net.Uri
 interface ContentLoader {
     suspend fun loadBook(context: Context): BookLoadResult
     fun narrationUri(sentenceId: String): Uri?
-    fun bgmPlaylist(): List<Uri>
     fun flipSound(): Uri?
     fun coverImage(): Uri?
 }

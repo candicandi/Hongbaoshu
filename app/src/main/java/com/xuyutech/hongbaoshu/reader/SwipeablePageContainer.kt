@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import android.os.SystemClock
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -44,6 +45,7 @@ fun SwipeablePageContainer(
     onCenterTap: (() -> Unit)? = null,  // 点击中间区域的回调（可选）
     onTopDoubleTap: (() -> Unit)? = null,  // 双击顶部区域的回调（打开菜单）
     onDragStart: (() -> Unit)? = null, // 拖动开始的回调（用于隐藏 Tooltip 等）
+    manualTapSignal: kotlinx.coroutines.flow.Flow<androidx.compose.ui.geometry.Offset>? = null,
     content: @Composable (Int) -> Unit  // 接收页码，渲染对应页面
 ) {
     val configuration = LocalConfiguration.current
@@ -60,7 +62,30 @@ fun SwipeablePageContainer(
     // 点击翻页的方向：-1 上一页，1 下一页，0 无
     var tapDirection by remember(pageIndex) { mutableIntStateOf(0) }
 
-    // 页码变化时重置偏移和拖动状态（已通过 remember(pageIndex) 处理）
+    // 处理手动触发的点击（来自子组件）
+    val handleTap: (androidx.compose.ui.geometry.Offset) -> Unit = { offset ->
+        val leftZoneWidth = screenWidthPx * 0.3f
+        val rightZoneWidth = screenWidthPx * 0.7f
+        when {
+            offset.x < leftZoneWidth && canGoPrev -> {
+                onDragStart?.invoke()
+                isDragging = true
+                tapDirection = -1
+            }
+            offset.x > rightZoneWidth && canGoNext -> {
+                onDragStart?.invoke()
+                isDragging = true
+                tapDirection = 1
+            }
+            else -> onCenterTap?.invoke()
+        }
+    }
+
+    LaunchedEffect(manualTapSignal) {
+        manualTapSignal?.collect { offset ->
+            handleTap(offset)
+        }
+    }
 
     // 处理点击翻页动画
     LaunchedEffect(tapDirection) {
@@ -77,8 +102,20 @@ fun SwipeablePageContainer(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)  // 使用主题背景色
             .pointerInput(pageIndex, canGoPrev, canGoNext, onCenterTap, onTopDoubleTap) {
+                val longPressThresholdMs = 600L
+                var suppressTap = false
                 detectTapGestures(
+                    onPress = {
+                        suppressTap = false
+                        val pressStart = SystemClock.uptimeMillis()
+                        val released = tryAwaitRelease()
+                        val pressDuration = SystemClock.uptimeMillis() - pressStart
+                        if (!released || pressDuration >= longPressThresholdMs) {
+                            suppressTap = true
+                        }
+                    },
                     onDoubleTap = { offset ->
+                        if (suppressTap) return@detectTapGestures
                         // 双击顶部 20% 区域打开菜单
                         val topZone = size.height * 0.2f
                         if (offset.y <= topZone) {
@@ -86,28 +123,8 @@ fun SwipeablePageContainer(
                         }
                     },
                     onTap = { offset ->
-                        val topZoneHeight = size.height * 0.2f
-                        val leftZoneWidth = size.width * 0.3f
-                        val rightZoneWidth = size.width * 0.7f
-                        
-                        // Top 20% triggers center tap behavior (menu/dismiss), not page turn
-                        if (offset.y <= topZoneHeight) {
-                            onCenterTap?.invoke()
-                        } else {
-                            when {
-                                offset.x < leftZoneWidth && canGoPrev -> {
-                                    onDragStart?.invoke()
-                                    isDragging = true
-                                    tapDirection = -1
-                                }
-                                offset.x > rightZoneWidth && canGoNext -> {
-                                    onDragStart?.invoke()
-                                    isDragging = true
-                                    tapDirection = 1
-                                }
-                                else -> onCenterTap?.invoke()
-                            }
-                        }
+                        if (suppressTap) return@detectTapGestures
+                        handleTap(offset)
                     }
                 )
             }

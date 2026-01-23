@@ -69,16 +69,14 @@ class PageCacheStore(private val context: Context) {
 }
 
 @Serializable
-private data class SerializablePage(
+internal data class SerializablePage(
     val index: Int,
     val slices: List<SerializableSlice>,
-    val isFirstPage: Boolean,
-    val globalIndex: Int,
-    val totalPages: Int
+    val isFirstPage: Boolean
 )
 
 @Serializable
-private data class SerializableSlice(
+internal data class SerializableSlice(
     val paragraphId: String,
     val paragraphType: String,
     val startChar: Int,
@@ -87,15 +85,13 @@ private data class SerializableSlice(
     val isLastSlice: Boolean
 )
 
-private fun Page.toSerializable() = SerializablePage(
+internal fun Page.toSerializable() = SerializablePage(
     index = index,
     slices = slices.map { it.toSerializable() },
-    isFirstPage = isFirstPage,
-    globalIndex = globalIndex,
-    totalPages = totalPages
+    isFirstPage = isFirstPage
 )
 
-private fun PageSlice.toSerializable() = SerializableSlice(
+internal fun PageSlice.toSerializable() = SerializableSlice(
     paragraphId = paragraphId,
     paragraphType = paragraphType.name,
     startChar = startChar,
@@ -104,15 +100,13 @@ private fun PageSlice.toSerializable() = SerializableSlice(
     isLastSlice = isLastSlice
 )
 
-private fun SerializablePage.toPage() = Page(
+internal fun SerializablePage.toPage() = Page(
     index = index,
     slices = slices.map { it.toSlice() },
-    isFirstPage = isFirstPage,
-    globalIndex = globalIndex,
-    totalPages = totalPages
+    isFirstPage = isFirstPage
 )
 
-private fun SerializableSlice.toSlice() = PageSlice(
+internal fun SerializableSlice.toSlice() = PageSlice(
     paragraphId = paragraphId,
     paragraphType = ParagraphType.valueOf(paragraphType),
     startChar = startChar,
