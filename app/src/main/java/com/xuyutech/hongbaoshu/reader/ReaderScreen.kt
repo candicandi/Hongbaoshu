@@ -303,13 +303,17 @@ fun ReaderScreen(
         LaunchedEffect(book, fontSizeLevel, contentWidthPx, contentHeightPx) {
             if (book != null && contentWidthPx > 0 && contentHeightPx > 0) {
                 pagesReady = false
-                // 在后台线程计算全书分页
+                // 在后台线程优先计算当前章节分页，让用户立即看到效果
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                    viewModel.computeAllChapters(textMeasurer, ::buildPageConfig, fontSizeLevel)
+                    viewModel.computeCurrentChapter(textMeasurer, ::buildPageConfig, fontSizeLevel)
                 }
                 pagesReady = true
-                // 继续预计算其他字号
-                viewModel.startPrecompute(textMeasurer, ::buildPageConfig)
+                
+                // 然后在后台慢慢计算剩余章节
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    viewModel.computeRemainingChapters(textMeasurer, ::buildPageConfig, fontSizeLevel)
+                    viewModel.startPrecompute(textMeasurer, ::buildPageConfig)
+                }
             }
         }
         
@@ -908,7 +912,7 @@ private fun FontSettingsPanel(
                 value = currentFontSize.toFloat(),
                 onValueChange = { onFontSizeChange(it.roundToInt()) },
                 valueRange = com.xuyutech.hongbaoshu.reader.FONT_SIZE_MIN.toFloat()..com.xuyutech.hongbaoshu.reader.FONT_SIZE_MAX.toFloat(),
-                steps = com.xuyutech.hongbaoshu.reader.FONT_SIZE_MAX - com.xuyutech.hongbaoshu.reader.FONT_SIZE_MIN - 1
+                steps = (com.xuyutech.hongbaoshu.reader.FONT_SIZE_MAX - com.xuyutech.hongbaoshu.reader.FONT_SIZE_MIN) / 2 - 1
             )
             
             Spacer(modifier = Modifier.height(24.dp))

@@ -3,11 +3,11 @@ package com.xuyutech.hongbaoshu.reader
 import com.xuyutech.hongbaoshu.data.Book
 
 /**
- * 字体大小：11-44
+ * 字体大小：18-28，每 2 个字号一个档位
  * 默认 22
  */
-const val FONT_SIZE_MIN = 11
-const val FONT_SIZE_MAX = 44
+const val FONT_SIZE_MIN = 18
+const val FONT_SIZE_MAX = 28
 const val FONT_SIZE_DEFAULT = 22  // 默认中间档
 
 data class ReaderState(

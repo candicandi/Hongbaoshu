@@ -238,6 +238,89 @@ class ReaderViewModel(
         return "${fontSizeLevel}_${widthPx}_${heightPx}"
     }
     
+    fun computeCurrentChapter(
+        textMeasurer: androidx.compose.ui.text.TextMeasurer,
+        buildConfig: (Int) -> PageConfig,
+        fontSizeLevel: Int
+    ) {
+        val book = _state.value?.book ?: return
+        val currentChapterIndex = _state.value?.currentChapterIndex ?: return
+        val chapter = book.chapters.getOrNull(currentChapterIndex) ?: return
+
+        // 检查内存缓存
+        val key = cacheKey(chapter.id, fontSizeLevel, currentWidthPx, currentHeightPx)
+        if (pageCache[key] != null) return
+
+        // 检查磁盘缓存
+        val diskKey = diskCacheKey(fontSizeLevel, currentWidthPx, currentHeightPx)
+        val diskCache = pageCacheStore.load(diskKey)
+        if (diskCache != null) {
+            diskCache[chapter.id]?.let { pages ->
+                pageCache[key] = pages
+                pageEngine.buildSentenceRanges(chapter)
+                return
+            }
+        }
+
+        // 计算当前章节
+        val config = buildConfig(fontSizeLevel)
+        val pages = pageEngine.paginate(chapter, config, textMeasurer)
+        pageCache[key] = pages
+        pageEngine.buildSentenceRanges(chapter)
+    }
+
+    fun computeRemainingChapters(
+        textMeasurer: androidx.compose.ui.text.TextMeasurer,
+        buildConfig: (Int) -> PageConfig,
+        fontSizeLevel: Int
+    ) {
+        val book = _state.value?.book ?: return
+        
+        // 检查是否全书都已缓存
+        val firstChapterKey = cacheKey(book.chapters.first().id, fontSizeLevel, currentWidthPx, currentHeightPx)
+        if (pageCache[firstChapterKey] != null && pageCache.size >= book.chapters.size) return
+
+        // 尝试从磁盘加载缓存
+        val diskKey = diskCacheKey(fontSizeLevel, currentWidthPx, currentHeightPx)
+        var diskCache = pageCacheStore.load(diskKey)
+        
+        if (diskCache != null) {
+            // 加载到内存缓存
+            book.chapters.forEach { chapter ->
+                val key = cacheKey(chapter.id, fontSizeLevel, currentWidthPx, currentHeightPx)
+                if (pageCache[key] == null) {
+                    diskCache?.get(chapter.id)?.let { pages ->
+                        pageCache[key] = pages
+                        pageEngine.buildSentenceRanges(chapter)
+                    }
+                }
+            }
+            // 如果磁盘缓存覆盖了所有章节，则结束
+            if (pageCache.size >= book.chapters.size) return
+        }
+        
+        // 计算剩余章节
+        val config = buildConfig(fontSizeLevel)
+        val diskData = (diskCache ?: emptyMap()).toMutableMap()
+        var hasNewData = false
+        
+        book.chapters.forEach { chapter ->
+            val key = cacheKey(chapter.id, fontSizeLevel, currentWidthPx, currentHeightPx)
+            if (pageCache[key] == null) {
+                val pages = pageEngine.paginate(chapter, config, textMeasurer)
+                pageCache[key] = pages
+                diskData[chapter.id] = pages
+                pageEngine.buildSentenceRanges(chapter)
+                hasNewData = true
+            }
+        }
+        
+        // 保存到磁盘
+        if (hasNewData) {
+            pageCacheStore.save(diskKey, diskData)
+        }
+    }
+
     /**
      * 计算指定字号的所有章节分页（包含全书页码）
      * 优先从磁盘缓存加载，缓存不存在时计算并保存
@@ -247,46 +330,8 @@ class ReaderViewModel(
         buildConfig: (Int) -> PageConfig,
         fontSizeLevel: Int
     ) {
-        val book = _state.value?.book ?: return
-        
-        // 检查内存缓存
-        val firstChapterKey = cacheKey(book.chapters.first().id, fontSizeLevel, currentWidthPx, currentHeightPx)
-        val firstChapterPages = pageCache[firstChapterKey]
-        if (firstChapterPages != null && firstChapterPages.isNotEmpty()) {
-            return
-        }
-        
-        // 尝试从磁盘加载缓存
-        val diskKey = diskCacheKey(fontSizeLevel, currentWidthPx, currentHeightPx)
-        val diskCache = pageCacheStore.load(diskKey)
-        if (diskCache != null) {
-            // 加载到内存缓存
-            book.chapters.forEach { chapter ->
-                val key = cacheKey(chapter.id, fontSizeLevel, currentWidthPx, currentHeightPx)
-                diskCache[chapter.id]?.let { pages ->
-                    pageCache[key] = pages
-                }
-                // 构建句子范围映射（朗读功能需要）
-                pageEngine.buildSentenceRanges(chapter)
-            }
-            return
-        }
-        
-        // 磁盘缓存不存在，计算分页
-        val config = buildConfig(fontSizeLevel)
-
-        val diskData = mutableMapOf<String, List<Page>>()
-        book.chapters.forEach { chapter ->
-            val key = cacheKey(chapter.id, fontSizeLevel, currentWidthPx, currentHeightPx)
-            val pages = pageEngine.paginate(chapter, config, textMeasurer)
-            pageCache[key] = pages
-            diskData[chapter.id] = pages
-
-            pageEngine.buildSentenceRanges(chapter)
-        }
-        
-        // 保存到磁盘
-        pageCacheStore.save(diskKey, diskData)
+        computeCurrentChapter(textMeasurer, buildConfig, fontSizeLevel)
+        computeRemainingChapters(textMeasurer, buildConfig, fontSizeLevel)
     }
     
     /**

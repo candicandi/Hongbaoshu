@@ -64,21 +64,7 @@ fun SwipeablePageContainer(
 
     // 处理手动触发的点击（来自子组件）
     val handleTap: (androidx.compose.ui.geometry.Offset) -> Unit = { offset ->
-        val leftZoneWidth = screenWidthPx * 0.3f
-        val rightZoneWidth = screenWidthPx * 0.7f
-        when {
-            offset.x < leftZoneWidth && canGoPrev -> {
-                onDragStart?.invoke()
-                isDragging = true
-                tapDirection = -1
-            }
-            offset.x > rightZoneWidth && canGoNext -> {
-                onDragStart?.invoke()
-                isDragging = true
-                tapDirection = 1
-            }
-            else -> onCenterTap?.invoke()
-        }
+        onCenterTap?.invoke()
     }
 
     LaunchedEffect(manualTapSignal) {
