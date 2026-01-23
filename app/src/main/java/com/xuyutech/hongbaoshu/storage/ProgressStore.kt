@@ -24,7 +24,6 @@ data class ProgressState(
     val narrationPosition: Long = 0L,
     val isNightMode: Boolean = false,
     val hasShownMenuGuide: Boolean = false,
-    val hasShownToolbarHint: Boolean = false,
     val narrationSpeed: Float = 1.0f
 )
 
@@ -36,7 +35,6 @@ class ProgressStore(private val context: Context) {
     private val keyNarrationPos = longPreferencesKey("narration_position")
     private val keyIsNightMode = booleanPreferencesKey("is_night_mode")
     private val keyHasShownMenuGuide = booleanPreferencesKey("has_shown_menu_guide")
-    private val keyHasShownToolbarHint = booleanPreferencesKey("has_shown_toolbar_hint")
     private val keyNarrationSpeed = floatPreferencesKey("narration_speed")
 
     val progress: Flow<ProgressState> = context.progressDataStore.data.map { prefs ->
@@ -47,7 +45,6 @@ class ProgressStore(private val context: Context) {
             narrationPosition = prefs[keyNarrationPos] ?: 0L,
             isNightMode = prefs[keyIsNightMode] ?: false,
             hasShownMenuGuide = prefs[keyHasShownMenuGuide] ?: false,
-            hasShownToolbarHint = prefs[keyHasShownToolbarHint] ?: false,
             narrationSpeed = prefs[keyNarrationSpeed] ?: 1.0f
         )
     }
@@ -65,7 +62,6 @@ class ProgressStore(private val context: Context) {
             }
             prefs[keyIsNightMode] = state.isNightMode
             prefs[keyHasShownMenuGuide] = state.hasShownMenuGuide
-            prefs[keyHasShownToolbarHint] = state.hasShownToolbarHint
             prefs[keyNarrationSpeed] = state.narrationSpeed
         }
     }

@@ -306,11 +306,11 @@ class ReaderViewModel(
                 // 先计算当前字号的所有章节（带全书页码）
                 computeAllChapters(textMeasurer, buildConfig, currentFontSize)
                 
-                // 预计算其他字号档位
-                for (fontLevel in FONT_SIZE_MIN..FONT_SIZE_MAX) {
-                    if (fontLevel == currentFontSize) continue
-                    computeAllChapters(textMeasurer, buildConfig, fontLevel)
-                }
+                // 预计算其他字号档位 (仅计算常用档位，避免过多计算)
+                // for (fontLevel in FONT_SIZE_MIN..FONT_SIZE_MAX) {
+                //    if (fontLevel == currentFontSize) continue
+                //    computeAllChapters(textMeasurer, buildConfig, fontLevel)
+                // }
             } finally {
                 isPrecomputing = false
             }
@@ -339,8 +339,7 @@ class ReaderViewModel(
                     currentChapterIndex = cappedChapterIndex,
                     pageIndex = saved.pageIndex,  // 由 UI 层校验
                     isNightMode = saved.isNightMode,
-                    hasShownMenuGuide = saved.hasShownMenuGuide,
-                    hasShownToolbarHint = saved.hasShownToolbarHint
+                    hasShownMenuGuide = saved.hasShownMenuGuide
                 )
                 restoreAudioState(saved)
             }.onFailure { e ->
@@ -562,7 +561,6 @@ class ReaderViewModel(
                     narrationPosition = audioManager.state.value.narrationPosition,
                     isNightMode = current.isNightMode,
                     hasShownMenuGuide = current.hasShownMenuGuide,
-                    hasShownToolbarHint = current.hasShownToolbarHint,
                     narrationSpeed = audioManager.state.value.narrationSpeed
                 )
             )
@@ -683,16 +681,5 @@ class ReaderViewModel(
         _state.value = current.copy(isMenuGuideDismissedInSession = true)
     }
 
-    fun markToolbarHintShown() {
-        val current = _state.value ?: return
-        if (!current.hasShownToolbarHint) {
-            _state.value = current.copy(hasShownToolbarHint = true)
-            persistState()
-        }
-    }
 
-    fun dismissToolbarHintInSession() {
-        val current = _state.value ?: return
-        _state.value = current.copy(isToolbarHintDismissedInSession = true)
-    }
 }

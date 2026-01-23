@@ -120,9 +120,9 @@ fun ReaderScreen(
     val audioState = audioManager.state.collectAsState()
     val showToc = remember { mutableStateOf(false) }
     val showNarrationPanel = remember { mutableStateOf(false) }
+    val showFontSettings = remember { mutableStateOf(false) }
     val toolbarState = remember { mutableStateOf(ToolBarState()) }
     var suppressNextCenterTap by remember { mutableStateOf(false) }
-    var showToolbarHint by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
@@ -166,6 +166,7 @@ fun ReaderScreen(
             lastInteractionTs = System.currentTimeMillis()
         )
         showNarrationPanel.value = false
+        showFontSettings.value = false
     }
 
     val openNarrationPanel = {
@@ -175,12 +176,20 @@ fun ReaderScreen(
             lastInteractionTs = System.currentTimeMillis()
         )
         showNarrationPanel.value = true
+        showFontSettings.value = false
     }
 
-    val shouldShowToolbarHint = !state.value.hasShownToolbarHint &&
-        !state.value.isToolbarHintDismissedInSession &&
-        !state.value.isLoading &&
-        state.value.error == null
+    val openFontSettings = {
+        toolbarState.value = toolbarState.value.copy(
+            isVisible = true,
+            isInteracting = true,
+            lastInteractionTs = System.currentTimeMillis()
+        )
+        showFontSettings.value = true
+        showNarrationPanel.value = false
+    }
+
+
 
     LaunchedEffect(
         toolbarState.value.isVisible,
@@ -198,20 +207,7 @@ fun ReaderScreen(
         }
     }
 
-    LaunchedEffect(shouldShowToolbarHint) {
-        if (shouldShowToolbarHint) {
-            showToolbarHint = true
-            viewModel.markToolbarHintShown()
-            delay(3000)
-            showToolbarHint = false
-        }
-    }
 
-    LaunchedEffect(toolbarState.value.isVisible) {
-        if (toolbarState.value.isVisible) {
-            showToolbarHint = false
-        }
-    }
 
     com.xuyutech.hongbaoshu.ui.theme.HongbaoshuTheme(darkTheme = state.value.isNightMode) {
         androidx.compose.material3.Surface(
@@ -230,7 +226,7 @@ fun ReaderScreen(
         val contentWidthPx = (screenWidthPx - horizontalPaddingPx * 2).coerceAtLeast(0)
         
         val fontSizeLevel = state.value.fontSizeLevel
-        val fontSizeSp = (18 + fontSizeLevel * 2).sp
+        val fontSizeSp = fontSizeLevel.sp
         val lineHeightSp = fontSizeSp * 1.5f  // 行高为字体大小的 1.5 倍
         val textStyle = TextStyle(
             fontSize = fontSizeSp,
@@ -261,7 +257,7 @@ fun ReaderScreen(
         
         // 构建分页配置的函数（用于预计算不同字号）
         fun buildPageConfig(fontLevel: Int): PageConfig {
-            val fSizeSp = (18 + fontLevel * 2).sp
+            val fSizeSp = fontLevel.sp
             val lHeightSp = fSizeSp * 1.5f
             val tStyle = TextStyle(
                 fontSize = fSizeSp,
@@ -388,7 +384,7 @@ fun ReaderScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             when {
-                state.value.isLoading -> {
+                state.value.isLoading || !pagesReady -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("加载中...", style = MaterialTheme.typography.bodyMedium)
                     }
@@ -401,7 +397,7 @@ fun ReaderScreen(
                         )
                     }
                 }
-                book != null && currentChapter != null && pagesReady -> {
+                book != null && currentChapter != null -> {
                     // 第一章第一页时也可以向前翻（返回封面）
                     val isFirstPageOfBook = currentChapterIndex == 0 && currentPageIndex == 0
                     val canGoPrev = currentPageIndex > 0 || currentChapterIndex > 0 || isFirstPageOfBook
@@ -436,6 +432,7 @@ fun ReaderScreen(
                             if (toolbarState.value.isVisible) {
                                 hideToolbar()
                                 showNarrationPanel.value = false
+                                showFontSettings.value = false
                             } else {
                                 updateToolbarInteraction()
                             }
@@ -526,7 +523,7 @@ fun ReaderScreen(
             }
 
             AnimatedVisibility(
-                visible = toolbarState.value.isVisible && !showNarrationPanel.value,
+                visible = toolbarState.value.isVisible && !showNarrationPanel.value && !showFontSettings.value,
                 enter = slideInVertically { it },
                 exit = slideOutVertically { it },
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -553,6 +550,10 @@ fun ReaderScreen(
                         updateToolbarInteraction()
                         openNarrationPanel()
                     },
+                    onOpenFontSettings = {
+                        updateToolbarInteraction()
+                        openFontSettings()
+                    },
                     isNightMode = state.value.isNightMode,
                     onToggleNightMode = {
                         updateToolbarInteraction()
@@ -561,7 +562,7 @@ fun ReaderScreen(
                 )
             }
 
-            if (showNarrationPanel.value) {
+            if (showNarrationPanel.value || showFontSettings.value) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -630,17 +631,26 @@ fun ReaderScreen(
                     onDismiss = { hideToolbar() }
                 )
             }
-
-
-
-            if (showToolbarHint) {
-                ToolbarHint(
-                    onDismissSession = {
-                        showToolbarHint = false
-                        viewModel.dismissToolbarHintInSession()
-                    }
+            
+            AnimatedVisibility(
+                visible = showFontSettings.value,
+                enter = slideInVertically { it },
+                exit = slideOutVertically { it },
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                FontSettingsPanel(
+                    currentFontSize = state.value.fontSizeLevel,
+                    onFontSizeChange = {
+                        updateToolbarInteraction()
+                        viewModel.setFontSize(it)
+                    },
+                    onDismiss = { hideToolbar() }
                 )
             }
+
+
+
+
             
             if (showToc.value) {
                 TocDialog(
@@ -664,38 +674,7 @@ fun ReaderScreen(
     }
     }
 }
-@Composable
-private fun ToolbarHint(
-    onDismissSession: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 24.dp),
-        contentAlignment = Alignment.TopCenter
-    ) {
-        androidx.compose.material3.Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.inverseSurface,
-            shadowElevation = 6.dp
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "单击中间区域唤出工具栏",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.inverseOnSurface
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                TextButton(onClick = onDismissSession) {
-                    Text("本次不再显示")
-                }
-            }
-        }
-    }
-}
+
 
 
 /**
@@ -790,6 +769,7 @@ private fun ReaderBottomBar(
     playPauseIcon: androidx.compose.ui.graphics.vector.ImageVector,
     playPauseLabel: String,
     onOpenNarrationPanel: () -> Unit,
+    onOpenFontSettings: () -> Unit,
     isNightMode: Boolean,
     onToggleNightMode: () -> Unit
 ) {
@@ -822,6 +802,11 @@ private fun ReaderBottomBar(
                 icon = androidx.compose.material.icons.Icons.Default.Info,
                 label = "朗读",
                 onClick = onOpenNarrationPanel
+            )
+            BottomBarAction(
+                icon = androidx.compose.material.icons.Icons.Default.Settings,
+                label = "字体",
+                onClick = onOpenFontSettings
             )
             BottomBarAction(
                 icon = if (isNightMode) {
@@ -858,6 +843,76 @@ private fun BottomBarAction(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun FontSettingsPanel(
+    currentFontSize: Int,
+    onFontSizeChange: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.material3.Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shadowElevation = 16.dp,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Drag Handle
+            Box(
+                modifier = Modifier
+                    .width(32.dp)
+                    .height(4.dp)
+                    .background(
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        androidx.compose.foundation.shape.CircleShape
+                    )
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            // Title
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                 Text(
+                    text = "字体大小",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                 androidx.compose.material3.IconButton(onClick = onDismiss) {
+                     androidx.compose.material3.Icon(
+                         imageVector = androidx.compose.material.icons.Icons.Default.Close,
+                         contentDescription = "关闭"
+                     )
+                }
+            }
+           
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            // Slider
+            Text(
+                text = "$currentFontSize",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            
+            Slider(
+                value = currentFontSize.toFloat(),
+                onValueChange = { onFontSizeChange(it.roundToInt()) },
+                valueRange = com.xuyutech.hongbaoshu.reader.FONT_SIZE_MIN.toFloat()..com.xuyutech.hongbaoshu.reader.FONT_SIZE_MAX.toFloat(),
+                steps = com.xuyutech.hongbaoshu.reader.FONT_SIZE_MAX - com.xuyutech.hongbaoshu.reader.FONT_SIZE_MIN - 1
+            )
+            
+            Spacer(modifier = Modifier.height(24.dp))
+        }
     }
 }
 

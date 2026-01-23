@@ -3,12 +3,12 @@ package com.xuyutech.hongbaoshu.reader
 import com.xuyutech.hongbaoshu.data.Book
 
 /**
- * 字体大小档位：0-4，共 5 档
- * 0 = 最小，2 = 中间（默认），4 = 最大
+ * 字体大小：11-44
+ * 默认 22
  */
-const val FONT_SIZE_MIN = 0
-const val FONT_SIZE_MAX = 4
-const val FONT_SIZE_DEFAULT = 2  // 默认中间档
+const val FONT_SIZE_MIN = 11
+const val FONT_SIZE_MAX = 44
+const val FONT_SIZE_DEFAULT = 22  // 默认中间档
 
 data class ReaderState(
     val isLoading: Boolean = true,
@@ -28,7 +28,5 @@ data class ReaderState(
     val narrationStopAtChapterEnd: Boolean = false,
     val isNightMode: Boolean = false,             // 夜间模式
     val hasShownMenuGuide: Boolean = false,       // 是否已显示过菜单引导（持久化）
-    val isMenuGuideDismissedInSession: Boolean = false, // 本次会话是否已关闭引导（临时）
-    val hasShownToolbarHint: Boolean = false,
-    val isToolbarHintDismissedInSession: Boolean = false
+    val isMenuGuideDismissedInSession: Boolean = false // 本次会话是否已关闭引导（临时）
 )
