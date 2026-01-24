@@ -37,6 +37,44 @@ internal fun resolveNarrationPlayRequest(
     return NarrationPlayRequest(sentenceIds = sentenceIds, startIndex = startIndex)
 }
 
+internal data class SentenceIdsUpdatePlan(
+    val newState: ReaderState,
+    val consumePendingRestart: Boolean,
+    val clearManualPageTurn: Boolean
+)
+
+internal fun planSentenceIdsUpdate(
+    current: ReaderState,
+    sentenceIds: List<String>,
+    pendingNarrationRestart: Boolean
+): SentenceIdsUpdatePlan {
+    if (current.currentPageSentenceIds == sentenceIds) {
+        return SentenceIdsUpdatePlan(
+            newState = current,
+            consumePendingRestart = false,
+            clearManualPageTurn = false
+        )
+    }
+
+    var newState = current.copy(currentPageSentenceIds = sentenceIds)
+    var consumePendingRestart = false
+    var clearManualPageTurn = false
+
+    if (pendingNarrationRestart) {
+        consumePendingRestart = true
+        clearManualPageTurn = true
+        if (sentenceIds.isNotEmpty()) {
+            newState = newState.copy(needPlayFirstSentence = true)
+        }
+    }
+
+    return SentenceIdsUpdatePlan(
+        newState = newState,
+        consumePendingRestart = consumePendingRestart,
+        clearManualPageTurn = clearManualPageTurn
+    )
+}
+
 class ReaderViewModel(
     application: Application,
     private val contentLoader: ContentLoader,
@@ -72,6 +110,7 @@ class ReaderViewModel(
     private var isManualPageTurn = false
     // 上一个播放完成的句子ID(用于防止跨页重复)
     private var lastCompletedSentenceId: String? = null
+    private var pendingNarrationRestartAfterSentenceUpdate: Boolean = false
 
 
     init {
@@ -186,8 +225,19 @@ class ReaderViewModel(
      */
     fun updateCurrentPageSentences(sentenceIds: List<String>) {
         val current = _state.value ?: return
-        if (current.currentPageSentenceIds != sentenceIds) {
-            _state.value = current.copy(currentPageSentenceIds = sentenceIds)
+        val plan = planSentenceIdsUpdate(
+            current = current,
+            sentenceIds = sentenceIds,
+            pendingNarrationRestart = pendingNarrationRestartAfterSentenceUpdate
+        )
+        if (plan.newState != current) {
+            _state.value = plan.newState
+        }
+        if (plan.consumePendingRestart) {
+            pendingNarrationRestartAfterSentenceUpdate = false
+        }
+        if (plan.clearManualPageTurn) {
+            isManualPageTurn = false
         }
     }
     
@@ -417,9 +467,28 @@ class ReaderViewModel(
     }
 
     fun selectChapter(index: Int) {
-        val book = _state.value?.book ?: return
+        val current = _state.value ?: return
+        val book = current.book ?: return
         val safeIndex = index.coerceIn(0, book.chapters.lastIndex)
-        _state.value = _state.value?.copy(currentChapterIndex = safeIndex, pageIndex = 0)
+
+        delayedPlayJob?.cancel()
+        lastCompletedSentenceId = null
+
+        val shouldRestartNarration = current.narrationEnabled
+        if (audioManager.state.value.narrationSentenceId != null) {
+            isManualPageTurn = shouldRestartNarration
+            audioManager.stopSentence()
+        }
+        pendingNarrationRestartAfterSentenceUpdate = shouldRestartNarration
+
+        _state.value = current.copy(
+            currentChapterIndex = safeIndex,
+            pageIndex = 0,
+            needPlayFirstSentence = false,
+            needPlayNextSentence = false,
+            currentPageSentenceIds = emptyList(),
+            lastPlayedSentenceId = null
+        )
         persistState(chapterIndex = safeIndex, pageIndex = 0, narrationSentenceId = null)
     }
 

@@ -298,11 +298,13 @@ fun ReaderScreen(
         
         // 分页计算状态
         var pagesReady by remember { mutableStateOf(false) }
+        var globalPagesReady by remember { mutableStateOf(false) }
         
         // 异步计算全书分页
         LaunchedEffect(book, fontSizeLevel, contentWidthPx, contentHeightPx) {
             if (book != null && contentWidthPx > 0 && contentHeightPx > 0) {
                 pagesReady = false
+                globalPagesReady = false
                 // 在后台线程优先计算当前章节分页，让用户立即看到效果
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     viewModel.computeCurrentChapter(textMeasurer, ::buildPageConfig, fontSizeLevel)
@@ -312,6 +314,10 @@ fun ReaderScreen(
                 // 然后在后台慢慢计算剩余章节
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     viewModel.computeRemainingChapters(textMeasurer, ::buildPageConfig, fontSizeLevel)
+                }
+                globalPagesReady = true
+
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     viewModel.startPrecompute(textMeasurer, ::buildPageConfig)
                 }
             }
@@ -334,6 +340,24 @@ fun ReaderScreen(
         
         val pageCount = currentPages.size
         val currentPageIndex = state.value.pageIndex.coerceIn(0, maxOf(0, pageCount - 1))
+        val globalPagination = remember(globalPagesReady, book, fontSizeLevel, contentWidthPx, contentHeightPx) {
+            if (!globalPagesReady || book == null) return@remember null
+            val chapterPageCounts = book.chapters.map { chapter ->
+                viewModel.getCachedPages(chapter.id, fontSizeLevel)?.size
+            }
+            if (chapterPageCounts.any { it == null }) return@remember null
+            val counts = chapterPageCounts.filterNotNull()
+            val startByChapterId = linkedMapOf<String, Int>()
+            var acc = 0
+            book.chapters.forEachIndexed { idx, chapter ->
+                startByChapterId[chapter.id] = acc
+                acc += counts[idx]
+            }
+            GlobalPaginationInfo(
+                chapterStartPageById = startByChapterId,
+                totalPages = acc
+            )
+        }
         
         // 校验页码
         LaunchedEffect(currentPageIndex, state.value.pageIndex) {
@@ -467,6 +491,14 @@ fun ReaderScreen(
                             chapter = targetChapter,
                             page = targetPage,
                             currentNarrationId = if (pageIndexToRender == currentPageIndex) currentNarrationId else null,
+                            pageIndicatorText = run {
+                                val globalStart = globalPagination?.chapterStartPageById?.get(targetChapter.id)
+                                val globalPageIndex0 = if (globalStart != null) globalStart + targetPage.index else null
+                                buildPageIndicatorText(
+                                    globalPageIndex0 = globalPageIndex0,
+                                    globalTotalPages = globalPagination?.totalPages
+                                )
+                            },
                             fontSizeLevel = fontSizeLevel,
                             textStyle = textStyle,
                             annotationStyle = annotationStyle,
@@ -714,6 +746,20 @@ private fun getPageByIndex(
         }
         else -> null
     }
+}
+
+internal data class GlobalPaginationInfo(
+    val chapterStartPageById: Map<String, Int>,
+    val totalPages: Int
+)
+
+internal fun buildPageIndicatorText(
+    globalPageIndex0: Int?,
+    globalTotalPages: Int?
+): String {
+    if (globalPageIndex0 == null || globalTotalPages == null) return ""
+    if (globalTotalPages <= 0 || globalPageIndex0 < 0) return ""
+    return "${globalPageIndex0 + 1}/$globalTotalPages"
 }
 
 @Composable
@@ -1302,6 +1348,7 @@ private fun PageContent(
     chapter: Chapter,
     page: Page,
     currentNarrationId: String?,
+    pageIndicatorText: String,
     fontSizeLevel: Int,
     textStyle: TextStyle,
     annotationStyle: TextStyle,
@@ -1377,6 +1424,17 @@ private fun PageContent(
                     }
                 }
             }
+        }
+
+        if (pageIndicatorText.isNotEmpty()) {
+            Text(
+                text = pageIndicatorText,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 6.dp, bottom = 6.dp)
+            )
         }
     }
 }
