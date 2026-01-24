@@ -10,13 +10,14 @@ import java.util.Properties
 android {
     namespace = "com.xuyutech.hongbaoshu"
     compileSdk = 36
+    buildToolsVersion = "36.1.0"
 
     defaultConfig {
         applicationId = "com.xuyutech.hongbaoshu"
         minSdk = 28
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.0.4"
+        versionCode = 7
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
