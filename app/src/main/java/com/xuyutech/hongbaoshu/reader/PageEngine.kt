@@ -53,6 +53,53 @@ class PageEngine {
     private val sentenceToPageIndex = mutableMapOf<String, Int>()
     private val paragraphSentenceRanges = mutableMapOf<String, List<IntRange>>()
 
+    private val sentenceDelimiters = setOf('，', '。')
+
+    private fun computeSentenceRanges(para: Paragraph): List<IntRange> {
+        val content = para.content
+        val expected = para.sentences.size
+        if (expected <= 0) return emptyList()
+        if (content.isEmpty()) return List(expected) { 0 until 0 }
+
+        val ends = mutableListOf<Int>()
+        content.forEachIndexed { idx, c ->
+            if (c in sentenceDelimiters) ends.add(idx + 1)
+        }
+        if (ends.isEmpty()) {
+            ends.add(content.length)
+        } else if (ends.last() != content.length) {
+            ends.add(content.length)
+        }
+
+        if (ends.size != expected) {
+            return List(expected) { 0 until 0 }
+        }
+
+        val ranges = mutableListOf<IntRange>()
+        var start = 0
+        ends.forEach { endExclusive ->
+            val rawStart = start.coerceIn(0, content.length)
+            val rawEnd = endExclusive.coerceIn(rawStart, content.length)
+
+            var s = rawStart
+            var e = rawEnd
+            while (s < e && content[s].isWhitespace()) s++
+            while (e > s && content[e - 1].isWhitespace()) e--
+            ranges.add(s until e)
+            start = rawEnd
+        }
+
+        for (i in 0 until expected) {
+            val range = ranges[i]
+            val actual = if (range.isEmpty()) "" else content.substring(range).trim()
+            val expectedText = para.sentences[i].content.trim()
+            if (actual != expectedText) {
+                return List(expected) { 0 until 0 }
+            }
+        }
+        return ranges
+    }
+
     /**
      * 为章节构建句子范围映射（从磁盘缓存加载时需要调用）
      */
@@ -60,15 +107,7 @@ class PageEngine {
         chapter.paragraphs.forEach { para ->
             if (para.type == ParagraphType.text && para.sentences.isNotEmpty()) {
                 if (paragraphSentenceRanges.containsKey(para.id)) return@forEach
-                val ranges = mutableListOf<IntRange>()
-                var offset = 0
-                para.sentences.forEach { sentence ->
-                    val start = offset
-                    val end = offset + sentence.content.length
-                    ranges.add(start until end)
-                    offset = end
-                }
-                paragraphSentenceRanges[para.id] = ranges
+                paragraphSentenceRanges[para.id] = computeSentenceRanges(para)
             }
         }
     }

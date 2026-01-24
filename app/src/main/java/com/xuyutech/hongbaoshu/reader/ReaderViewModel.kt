@@ -17,6 +17,26 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+internal data class NarrationPlayRequest(
+    val sentenceIds: List<String>,
+    val startIndex: Int
+)
+
+internal fun resolveNarrationPlayRequest(
+    requestedSentenceId: String,
+    currentPageSentenceIds: List<String>,
+    overrideSentenceIds: List<String>? = null
+): NarrationPlayRequest {
+    val base = when {
+        !overrideSentenceIds.isNullOrEmpty() -> overrideSentenceIds
+        currentPageSentenceIds.isNotEmpty() -> currentPageSentenceIds
+        else -> listOf(requestedSentenceId)
+    }
+    val sentenceIds = if (requestedSentenceId in base) base else listOf(requestedSentenceId)
+    val startIndex = sentenceIds.indexOf(requestedSentenceId).coerceAtLeast(0)
+    return NarrationPlayRequest(sentenceIds = sentenceIds, startIndex = startIndex)
+}
+
 class ReaderViewModel(
     application: Application,
     private val contentLoader: ContentLoader,
@@ -424,15 +444,27 @@ class ReaderViewModel(
         audioManager.setNarrationSpeed(speed)
     }
 
+    fun playSentence(sentenceId: String, pageSentenceIds: List<String>) {
+        updateCurrentPageSentences(pageSentenceIds)
+        playSentenceInternal(sentenceId, overrideSentenceIds = pageSentenceIds)
+    }
+
     fun playSentence(sentenceId: String) {
+        playSentenceInternal(sentenceId, overrideSentenceIds = null)
+    }
+
+    private fun playSentenceInternal(sentenceId: String, overrideSentenceIds: List<String>?) {
         _state.value = _state.value?.copy(lastPlayedSentenceId = sentenceId)
         android.util.Log.d("ReaderViewModel", "playSentence called: $sentenceId")
         
-        // 使用列表播放模式：传入当前页所有句子，并从点击的句子开始播放
-        val sentences = _state.value?.currentPageSentenceIds ?: listOf(sentenceId)
-        val startIndex = sentences.indexOf(sentenceId).coerceAtLeast(0)
+        val currentPageSentenceIds = _state.value?.currentPageSentenceIds.orEmpty()
+        val request = resolveNarrationPlayRequest(
+            requestedSentenceId = sentenceId,
+            currentPageSentenceIds = currentPageSentenceIds,
+            overrideSentenceIds = overrideSentenceIds
+        )
         
-        val success = audioManager.playNarrationList(sentences, startIndex)
+        val success = audioManager.playNarrationList(request.sentenceIds, request.startIndex)
         android.util.Log.d("ReaderViewModel", "playSentence result: $success")
         if (success) {
             persistState(narrationSentenceId = sentenceId)

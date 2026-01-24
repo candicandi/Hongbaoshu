@@ -483,13 +483,13 @@ fun ReaderScreen(
                             onSingleTap = { offset ->
                                 manualTapSignal.tryEmit(offset)
                             },
-                            onPlayNarration = { id ->
+                            onPlayNarration = { id, pageSentenceIds ->
                                 activeTooltipSentenceId = null
                                 clickedSentenceId = null
                                 if (!state.value.narrationEnabled) {
                                     viewModel.toggleNarration(true)
                                 }
-                                viewModel.playSentence(id)
+                                viewModel.playSentence(id, pageSentenceIds)
                             }
                         )
                     }
@@ -1312,7 +1312,7 @@ private fun PageContent(
     clickedSentenceId: String?,
     onTooltipRequest: (String) -> Unit,
     onSingleTap: (androidx.compose.ui.geometry.Offset) -> Unit,
-    onPlayNarration: (String) -> Unit
+    onPlayNarration: (String, List<String>) -> Unit
 ) {
     val density = LocalDensity.current
     val textParagraphSpacingDp = with(density) { textParagraphSpacingPx.toDp() }
@@ -1353,23 +1353,28 @@ private fun PageContent(
             }
             // 页面内容
             Column(modifier = Modifier.weight(1f)) {
+                val pageSentenceIds = remember(chapter.id, page) {
+                    pageEngine.getSentenceIds(page, chapter)
+                }
                 page.slices.forEach { slice ->
                     val para = paragraphMap[slice.paragraphId] ?: return@forEach
-                    SliceContent(
-                        slice = slice,
-                        paragraph = para,
-                        currentNarrationId = currentNarrationId,
-                        textStyle = textStyle,
-                        annotationStyle = annotationStyle,
-                        textParagraphSpacingDp = textParagraphSpacingDp,
-                        annotationSpacingDp = annotationSpacingDp,
-                        pageEngine = pageEngine,
-                        onTextTap = { _, id -> onTooltipRequest(id) },
-                        onSingleTap = onSingleTap,
-                        activeTooltipSentenceId = activeTooltipSentenceId,
-                        clickedSentenceId = clickedSentenceId,
-                        onPlayNarration = onPlayNarration
-                    )
+                    androidx.compose.runtime.key(slice.paragraphId, slice.startChar, slice.endChar) {
+                        SliceContent(
+                            slice = slice,
+                            paragraph = para,
+                            currentNarrationId = currentNarrationId,
+                            textStyle = textStyle,
+                            annotationStyle = annotationStyle,
+                            textParagraphSpacingDp = textParagraphSpacingDp,
+                            annotationSpacingDp = annotationSpacingDp,
+                            pageEngine = pageEngine,
+                            onTextTap = { _, id -> onTooltipRequest(id) },
+                            onSingleTap = onSingleTap,
+                            activeTooltipSentenceId = activeTooltipSentenceId,
+                            clickedSentenceId = clickedSentenceId,
+                            onPlayNarration = { id -> onPlayNarration(id, pageSentenceIds) }
+                        )
+                    }
                 }
             }
         }
