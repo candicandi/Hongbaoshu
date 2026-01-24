@@ -300,23 +300,27 @@ fun ReaderScreen(
         var pagesReady by remember { mutableStateOf(false) }
         var globalPagesReady by remember { mutableStateOf(false) }
         
-        // 异步计算全书分页
-        LaunchedEffect(book, fontSizeLevel, contentWidthPx, contentHeightPx) {
-            if (book != null && contentWidthPx > 0 && contentHeightPx > 0) {
+        LaunchedEffect(book, currentChapterIndex, fontSizeLevel, contentWidthPx, contentHeightPx) {
+            if (book != null &&
+                currentChapterIndex in book.chapters.indices &&
+                contentWidthPx > 0 &&
+                contentHeightPx > 0
+            ) {
                 pagesReady = false
-                globalPagesReady = false
-                // 在后台线程优先计算当前章节分页，让用户立即看到效果
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     viewModel.computeCurrentChapter(textMeasurer, ::buildPageConfig, fontSizeLevel)
                 }
                 pagesReady = true
-                
-                // 然后在后台慢慢计算剩余章节
+            }
+        }
+
+        LaunchedEffect(book, fontSizeLevel, contentWidthPx, contentHeightPx) {
+            if (book != null && contentWidthPx > 0 && contentHeightPx > 0) {
+                globalPagesReady = false
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     viewModel.computeRemainingChapters(textMeasurer, ::buildPageConfig, fontSizeLevel)
                 }
                 globalPagesReady = true
-
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     viewModel.startPrecompute(textMeasurer, ::buildPageConfig)
                 }
@@ -412,7 +416,7 @@ fun ReaderScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             when {
-                state.value.isLoading || !pagesReady -> {
+                state.value.isLoading || !pagesReady || currentPages.isEmpty() -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("加载中...", style = MaterialTheme.typography.bodyMedium)
                     }
@@ -484,7 +488,7 @@ fun ReaderScreen(
                                 currentPages = currentPages,
                                 prevChapterPages = prevChapterPages,
                                 pageIndexToRender = pageIndexToRender,
-                                viewModel = viewModel
+                                nextPagesProvider = { id -> viewModel.getCachedPages(id) }
                             ) ?: return@SwipeablePageContainer
                         
                         PageContent(
@@ -716,13 +720,13 @@ fun ReaderScreen(
 /**
  * 根据页码索引获取页面数据（支持跨章节预览）
  */
-private fun getPageByIndex(
+internal fun getPageByIndex(
     book: com.xuyutech.hongbaoshu.data.Book,
     currentChapterIndex: Int,
     currentPages: List<Page>,
     prevChapterPages: List<Page>,
     pageIndexToRender: Int,
-    viewModel: ReaderViewModel
+    nextPagesProvider: (String) -> List<Page>?
 ): Pair<Chapter, Page>? {
     return when {
         // 上一章最后一页
@@ -732,9 +736,11 @@ private fun getPageByIndex(
             prevChapter to page
         }
         // 下一章第一页
-        pageIndexToRender >= currentPages.size && currentChapterIndex < book.chapters.lastIndex -> {
+        currentPages.isNotEmpty() &&
+            pageIndexToRender >= currentPages.size &&
+            currentChapterIndex < book.chapters.lastIndex -> {
             val nextChapter = book.chapters[currentChapterIndex + 1]
-            val nextPages = viewModel.getCachedPages(nextChapter.id) ?: return null
+            val nextPages = nextPagesProvider(nextChapter.id) ?: return null
             val page = nextPages.firstOrNull() ?: return null
             nextChapter to page
         }

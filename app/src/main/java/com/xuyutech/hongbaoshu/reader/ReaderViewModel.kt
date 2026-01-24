@@ -75,6 +75,19 @@ internal fun planSentenceIdsUpdate(
     )
 }
 
+internal fun areAllChaptersCachedForFontSize(
+    chapterIds: List<String>,
+    fontSizeLevel: Int,
+    widthPx: Int,
+    heightPx: Int,
+    pageCacheKeys: Set<String>
+): Boolean {
+    if (chapterIds.isEmpty()) return true
+    return chapterIds.all { chapterId ->
+        "${chapterId}_${fontSizeLevel}_${widthPx}_${heightPx}" in pageCacheKeys
+    }
+}
+
 class ReaderViewModel(
     application: Application,
     private val contentLoader: ContentLoader,
@@ -347,8 +360,14 @@ class ReaderViewModel(
         val book = _state.value?.book ?: return
         
         // 检查是否全书都已缓存
-        val firstChapterKey = cacheKey(book.chapters.first().id, fontSizeLevel, currentWidthPx, currentHeightPx)
-        if (pageCache[firstChapterKey] != null && pageCache.size >= book.chapters.size) return
+        val allCached = areAllChaptersCachedForFontSize(
+            chapterIds = book.chapters.map { it.id },
+            fontSizeLevel = fontSizeLevel,
+            widthPx = currentWidthPx,
+            heightPx = currentHeightPx,
+            pageCacheKeys = pageCache.keys
+        )
+        if (allCached) return
 
         // 尝试从磁盘加载缓存
         val diskKey = diskCacheKey(fontSizeLevel, currentWidthPx, currentHeightPx)
@@ -366,7 +385,14 @@ class ReaderViewModel(
                 }
             }
             // 如果磁盘缓存覆盖了所有章节，则结束
-            if (pageCache.size >= book.chapters.size) return
+            val allCachedAfterDisk = areAllChaptersCachedForFontSize(
+                chapterIds = book.chapters.map { it.id },
+                fontSizeLevel = fontSizeLevel,
+                widthPx = currentWidthPx,
+                heightPx = currentHeightPx,
+                pageCacheKeys = pageCache.keys
+            )
+            if (allCachedAfterDisk) return
         }
         
         // 计算剩余章节

@@ -68,6 +68,12 @@ class PlaybackService : MediaSessionService() {
                 isForeground = false
                 stopSelf()
             }
+            else -> {
+                syncSessionPlayer()
+                if (audioManager.state.value.narrationSentenceId != null) {
+                    startForegroundIfNeeded()
+                }
+            }
         }
         return START_STICKY
     }

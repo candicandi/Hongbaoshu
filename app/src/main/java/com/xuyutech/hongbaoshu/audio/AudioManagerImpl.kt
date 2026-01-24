@@ -3,6 +3,7 @@ package com.xuyutech.hongbaoshu.audio
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.SoundPool
+import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes as Media3AudioAttributes
 import androidx.media3.common.C
@@ -59,6 +60,11 @@ class AudioManagerImpl(
     private val playbackServiceController = PlaybackServiceController(context)
     private var narrationPlaybackState: Int = Player.STATE_IDLE
     private var autoAdvancePending: Boolean = false
+    private var lastNarrationSentenceIds: List<String> = emptyList()
+    private var lastNarrationStartIndex: Int = 0
+    private var lastRetrySentenceId: String? = null
+    private var lastRetryCount: Int = 0
+    private var lastRetryAtMs: Long = 0L
 
     private fun createStableNarrationPlayer(player: Player): Player {
         return object : ForwardingPlayer(player) {
@@ -85,6 +91,10 @@ class AudioManagerImpl(
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val newId = mediaItem?.mediaId
                 if (newId != null) {
+                    if (lastRetrySentenceId != newId) {
+                        lastRetrySentenceId = newId
+                        lastRetryCount = 0
+                    }
                     _state.update { current ->
                         current.copy(
                             narrationSentenceId = newId,
@@ -144,6 +154,12 @@ class AudioManagerImpl(
                 android.util.Log.e("AudioManager", "Player error: ${error.message}")
                 val activeId = player.currentMediaItem?.mediaId
                 if (activeId != null) {
+                    val recovered = tryRecoverFromPlayerError(
+                        activeSentenceId = activeId,
+                        mediaItemIndex = player.currentMediaItemIndex,
+                        positionMs = player.currentPosition
+                    )
+                    if (recovered) return
                     _state.update { current ->
                         current.copy(
                             narrationSentenceId = null,
@@ -184,6 +200,97 @@ class AudioManagerImpl(
         stableNarrationPlayer = createStableNarrationPlayer(narrationPlayer)
     }
 
+    private fun buildNarrationMediaItems(sentenceIds: List<String>): List<MediaItem> {
+        return sentenceIds.mapNotNull { id ->
+            contentLoader.narrationUri(id)?.let { uri ->
+                MediaItem.Builder()
+                    .setUri(uri)
+                    .setMediaId(id)
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle("朗读")
+                            .setArtist("红宝书")
+                            .build()
+                    )
+                    .build()
+            }
+        }
+    }
+
+    private fun tryRecoverFromPlayerError(
+        activeSentenceId: String,
+        mediaItemIndex: Int,
+        positionMs: Long
+    ): Boolean {
+        if (lastNarrationSentenceIds.isEmpty()) return false
+
+        if (lastRetrySentenceId != activeSentenceId) {
+            lastRetrySentenceId = activeSentenceId
+            lastRetryCount = 0
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastRetryAtMs > 10_000L) {
+            lastRetryCount = 0
+        }
+        lastRetryAtMs = now
+
+        return if (lastRetryCount == 0) {
+            lastRetryCount = 1
+            restartNarrationFrom(activeSentenceId, mediaItemIndex, positionMs)
+        } else {
+            skipAfterNarrationError(activeSentenceId)
+        }
+    }
+
+    private fun restartNarrationFrom(
+        activeSentenceId: String,
+        mediaItemIndex: Int,
+        positionMs: Long
+    ): Boolean {
+        return try {
+            resetNarrationPlayer()
+            val mediaItems = buildNarrationMediaItems(lastNarrationSentenceIds)
+            if (mediaItems.isEmpty()) return false
+
+            val indexById = mediaItems.indexOfFirst { it.mediaId == activeSentenceId }
+            val resumeIndex = when {
+                indexById >= 0 -> indexById
+                mediaItemIndex in 0 until mediaItems.size -> mediaItemIndex
+                else -> lastNarrationStartIndex.coerceIn(0, mediaItems.lastIndex)
+            }
+            val safePositionMs = positionMs.coerceAtLeast(0L)
+            val resumeId = mediaItems[resumeIndex].mediaId
+
+            narrationPlayer.setMediaItems(mediaItems, resumeIndex, safePositionMs)
+            narrationPlayer.prepare()
+            narrationPlayer.playWhenReady = true
+
+            _state.update { current ->
+                current.copy(
+                    narrationSentenceId = resumeId,
+                    narrationPosition = safePositionMs,
+                    narrationPlaying = true,
+                    narrationError = null
+                )
+            }
+            updateForegroundState()
+            true
+        } catch (e: Exception) {
+            android.util.Log.e("AudioManager", "Error recovering playback: ${e.message}")
+            false
+        }
+    }
+
+    private fun skipAfterNarrationError(activeSentenceId: String): Boolean {
+        val idx = lastNarrationSentenceIds.indexOf(activeSentenceId)
+        if (idx < 0) return false
+        val nextIndex = idx + 1
+        if (nextIndex > lastNarrationSentenceIds.lastIndex) return false
+        lastRetryCount = 0
+        return playNarrationList(lastNarrationSentenceIds, nextIndex)
+    }
+
     private fun ensureResourcesLoaded() {
         if (flipSoundId == 0) {
             contentLoader.flipSound()?.let { uri ->
@@ -211,22 +318,13 @@ class AudioManagerImpl(
 
         ensureNarrationPlayerReady()
         autoAdvancePending = false
+        lastNarrationSentenceIds = sentenceIds
+        lastNarrationStartIndex = idx
+        lastRetrySentenceId = startId
+        lastRetryCount = 0
 
         try {
-            val mediaItems = sentenceIds.mapNotNull { id ->
-                contentLoader.narrationUri(id)?.let { uri ->
-                    MediaItem.Builder()
-                        .setUri(uri)
-                        .setMediaId(id)
-                        .setMediaMetadata(
-                            MediaMetadata.Builder()
-                                .setTitle("朗读")
-                                .setArtist("红宝书")
-                                .build()
-                        )
-                        .build()
-                }
-            }
+            val mediaItems = buildNarrationMediaItems(sentenceIds)
             
             if (mediaItems.isEmpty()) return false
 
@@ -280,6 +378,10 @@ class AudioManagerImpl(
     override fun stopSentence() {
         narrationPlayer.stop()
         autoAdvancePending = false
+        lastNarrationSentenceIds = emptyList()
+        lastNarrationStartIndex = 0
+        lastRetrySentenceId = null
+        lastRetryCount = 0
         _state.update { current ->
             current.copy(
                 narrationSentenceId = null,
