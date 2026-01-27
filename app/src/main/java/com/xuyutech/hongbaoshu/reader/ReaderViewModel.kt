@@ -9,6 +9,7 @@ import com.xuyutech.hongbaoshu.data.Chapter
 import com.xuyutech.hongbaoshu.data.ContentLoader
 import com.xuyutech.hongbaoshu.storage.ProgressStore
 import com.xuyutech.hongbaoshu.storage.ProgressState
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Job
@@ -35,6 +36,15 @@ internal fun resolveNarrationPlayRequest(
     val sentenceIds = if (requestedSentenceId in base) base else listOf(requestedSentenceId)
     val startIndex = sentenceIds.indexOf(requestedSentenceId).coerceAtLeast(0)
     return NarrationPlayRequest(sentenceIds = sentenceIds, startIndex = startIndex)
+}
+
+internal fun pickAutoTurnSentenceToPlay(
+    sentenceIds: List<String>,
+    lastCompletedSentenceId: String?
+): String? {
+    val first = sentenceIds.firstOrNull() ?: return null
+    if (first == lastCompletedSentenceId && sentenceIds.size > 1) return sentenceIds[1]
+    return first
 }
 
 internal data class SentenceIdsUpdatePlan(
@@ -118,6 +128,7 @@ class ReaderViewModel(
         get() = _state.value?.narrationEnabled ?: false
     // 延迟播放任务，用于取消之前的延迟
     private var delayedPlayJob: Job? = null
+    private var autoTurnPlayJob: Job? = null
     private var sleepTimerJob: Job? = null
     // 是否正在手动翻页（用于防止自动播放干扰）
     private var isManualPageTurn = false
@@ -139,7 +150,7 @@ class ReaderViewModel(
         audioManager.setNarrationCompletionCallback { completedSentenceId ->
             // 在后台线程中执行，不受 UI 生命周期影响
             if (narrationEnabled && !isManualPageTurn) {
-                viewModelScope.launch {
+                viewModelScope.launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
                     handlePageCompleted(completedSentenceId)
                 }
             }
@@ -157,7 +168,11 @@ class ReaderViewModel(
         
         val current = _state.value ?: return
         val book = current.book ?: return
-        val pageCount = getCachedPages(book.chapters[current.currentChapterIndex].id)?.size ?: return
+        val currentChapter = book.chapters.getOrNull(current.currentChapterIndex) ?: return
+        val currentPages = getCachedPages(currentChapter.id)
+            ?: loadCachedPagesFromDisk(currentChapter, current.fontSizeLevel)
+            ?: return
+        val pageCount = currentPages.size
         val stopAtChapterEnd = current.narrationStopAtChapterEnd
         
         if (current.pageIndex + 1 < pageCount) {
@@ -181,48 +196,74 @@ class ReaderViewModel(
         val current = _state.value ?: return
         val book = current.book ?: return
         val newIndex = current.pageIndex + 1
-        
-        when {
+
+        val target = when {
             newIndex >= currentPageCount && current.currentChapterIndex < book.chapters.lastIndex -> {
-                // 翻到下一章
-                val nextChapter = current.currentChapterIndex + 1
-                _state.postValue(current.copy(currentChapterIndex = nextChapter, pageIndex = 0))
-                persistState(chapterIndex = nextChapter, pageIndex = 0)
-                // 延迟后播放新页面第一句
-                schedulePlayFirstSentence()
+                (current.currentChapterIndex + 1) to 0
             }
             newIndex in 0 until currentPageCount -> {
-                // 翻到下一页
-                _state.postValue(current.copy(pageIndex = newIndex))
-                persistState(pageIndex = newIndex)
-                // 延迟后播放新页面第一句
-                schedulePlayFirstSentence()
+                current.currentChapterIndex to newIndex
             }
+            else -> null
+        } ?: return
+
+        val (targetChapterIndex, targetPageIndex) = target
+        _state.postValue(current.copy(currentChapterIndex = targetChapterIndex, pageIndex = targetPageIndex))
+        if (targetChapterIndex != current.currentChapterIndex) {
+            persistState(chapterIndex = targetChapterIndex, pageIndex = targetPageIndex)
+        } else {
+            persistState(pageIndex = targetPageIndex)
         }
+
+        schedulePlayFirstSentence(targetChapterIndex = targetChapterIndex, targetPageIndex = targetPageIndex)
     }
     
     /**
      * 延迟播放新页面第一句（等待页面数据更新）
      */
-    private fun schedulePlayFirstSentence() {
-        viewModelScope.launch {
-            delay(300L)
-            // 检查新页面的第一句是否是刚刚播放完的句子
-            val sentences = _state.value?.currentPageSentenceIds ?: emptyList()
-            if (sentences.isNotEmpty()) {
-                val firstSentence = sentences.first()
-                if (firstSentence == lastCompletedSentenceId && sentences.size > 1) {
-                    // 跨页句子,播放下一句
-                    playSentence(sentences[1])
-                    lastCompletedSentenceId = null // Reset after handling
-                } else {
-                    // 正常播放第一句
-                    _state.value = _state.value?.copy(needPlayFirstSentence = true)
+    private fun schedulePlayFirstSentence(targetChapterIndex: Int, targetPageIndex: Int) {
+        autoTurnPlayJob?.cancel()
+        autoTurnPlayJob = viewModelScope.launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+            if (!narrationEnabled) return@launch
+
+            val current = _state.value ?: return@launch
+            val book = current.book ?: return@launch
+            val chapter = book.chapters.getOrNull(targetChapterIndex) ?: return@launch
+
+            val pages = getCachedPages(chapter.id) ?: loadCachedPagesFromDisk(chapter, current.fontSizeLevel)
+            val page = pages?.getOrNull(targetPageIndex)
+            val sentenceIds = if (page == null) emptyList() else {
+                pageEngine.buildSentenceRanges(chapter)
+                pageEngine.getSentenceIds(page, chapter)
+            }
+
+            updateCurrentPageSentences(sentenceIds)
+
+            val nextSentence = pickAutoTurnSentenceToPlay(sentenceIds, lastCompletedSentenceId)
+                ?: run {
+                    _state.postValue(_state.value?.copy(needPlayFirstSentence = true))
+                    return@launch
                 }
+            if (nextSentence != sentenceIds.firstOrNull()) {
+                playSentence(nextSentence)
+                lastCompletedSentenceId = null
             } else {
-                _state.value = _state.value?.copy(needPlayFirstSentence = true)
+                playSentence(nextSentence)
             }
         }
+    }
+
+    private fun loadCachedPagesFromDisk(chapter: Chapter, fontSizeLevel: Int): List<Page>? {
+        val key = cacheKey(chapter.id, fontSizeLevel, currentWidthPx, currentHeightPx)
+        val cached = pageCache[key]
+        if (cached != null) return cached
+
+        val diskKey = diskCacheKey(fontSizeLevel, currentWidthPx, currentHeightPx)
+        val diskCache = pageCacheStore.load(diskKey) ?: return null
+        val pages = diskCache[chapter.id] ?: return null
+        pageCache[key] = pages
+        pageEngine.buildSentenceRanges(chapter)
+        return pages
     }
 
     

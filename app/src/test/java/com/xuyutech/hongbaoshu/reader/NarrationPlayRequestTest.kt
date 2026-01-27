@@ -47,5 +47,31 @@ class NarrationPlayRequestTest {
         assertEquals(listOf("s2"), request.sentenceIds)
         assertEquals(0, request.startIndex)
     }
-}
 
+    @Test
+    fun `auto turn picks first sentence when not cross page`() {
+        val next = pickAutoTurnSentenceToPlay(
+            sentenceIds = listOf("s1", "s2"),
+            lastCompletedSentenceId = "s0"
+        )
+        assertEquals("s1", next)
+    }
+
+    @Test
+    fun `auto turn skips duplicated first sentence on cross page`() {
+        val next = pickAutoTurnSentenceToPlay(
+            sentenceIds = listOf("s1", "s2", "s3"),
+            lastCompletedSentenceId = "s1"
+        )
+        assertEquals("s2", next)
+    }
+
+    @Test
+    fun `auto turn returns null when page has no sentences`() {
+        val next = pickAutoTurnSentenceToPlay(
+            sentenceIds = emptyList(),
+            lastCompletedSentenceId = "s1"
+        )
+        assertEquals(null, next)
+    }
+}
