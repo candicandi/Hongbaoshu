@@ -16,6 +16,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.xuyutech.hongbaoshu.bookshelf.BookshelfBook
 import com.xuyutech.hongbaoshu.bookshelf.BookshelfScreen
@@ -52,6 +54,7 @@ private fun HongbaoshuApp() {
     val pageCacheStore = remember { ServiceLocator.providePageCacheStore(context) }
     val packIndexStore = remember { ServiceLocator.providePackIndexStore(context) }
     val packFileStore = remember { ServiceLocator.providePackFileStore(context) }
+    val packImporter = remember { ServiceLocator.providePackImporter(context) }
     
     // 启动时立即创建 ViewModel 并开始加载文档
     val viewModel: ReaderViewModel = viewModel(
@@ -75,6 +78,16 @@ private fun HongbaoshuApp() {
     val packs = bookshelfViewModel.packs.collectAsState()
     val scope = rememberCoroutineScope()
     val bookshelfMessage = remember { mutableStateOf<String?>(null) }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val result = packImporter.import(uri)
+            bookshelfMessage.value = result.message
+        }
+    }
     
     // 监听加载状态
     val readerState = viewModel.state.observeAsState()
@@ -180,6 +193,9 @@ private fun HongbaoshuApp() {
             },
             message = bookshelfMessage.value,
             onMessageShown = { bookshelfMessage.value = null },
+            onImport = {
+                importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+            },
             viewModel = viewModel,
             audioManager = audioManager
         )
@@ -199,6 +215,7 @@ private fun ReaderNavHost(
     onBackToBookshelf: () -> Unit,
     message: String?,
     onMessageShown: () -> Unit,
+    onImport: () -> Unit,
     viewModel: ReaderViewModel,
     audioManager: AudioManager
 ) {
@@ -206,7 +223,7 @@ private fun ReaderNavHost(
         Screen.Bookshelf -> BookshelfScreen(
             books = books,
             onOpenBook = onOpenBook,
-            onImport = {},
+            onImport = onImport,
             onDeletePack = onDeletePack,
             onRevalidatePack = onRevalidatePack,
             message = message,
