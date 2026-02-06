@@ -137,8 +137,20 @@ private fun HongbaoshuApp() {
             isLoading = isLoading,
             books = packs.value.map { p ->
                 val coverUri = run {
-                    val cover = File(packFileStore.packDir(p.packId), "images/cover.png")
-                    if (cover.exists()) cover.toURI().toString() else null
+                    val root = packFileStore.packDir(p.packId)
+                    val candidates = listOf(
+                        "images/cover.png",
+                        "images/cover.jpg",
+                        "images/cover.jpeg",
+                        "cover.png",
+                        "cover.jpg",
+                        "cover.jpeg"
+                    )
+                    val file = candidates
+                        .asSequence()
+                        .map { rel -> File(root, rel) }
+                        .firstOrNull { it.exists() }
+                    file?.toURI()?.toString()
                 }
                 BookshelfBook(
                     packId = p.packId,
