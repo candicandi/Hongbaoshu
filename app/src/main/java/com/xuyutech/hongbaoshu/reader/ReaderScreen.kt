@@ -1,5 +1,7 @@
 package com.xuyutech.hongbaoshu.reader
 
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PlayArrow
@@ -50,11 +52,17 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -612,90 +620,89 @@ fun ReaderScreen(
                 )
             }
 
-            if (showNarrationPanel.value || showFontSettings.value) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) {
-                            detectTapGestures { hideToolbar() }
-                        }
-                )
-            }
-            AnimatedVisibility(
-                visible = showNarrationPanel.value,
-                enter = slideInVertically { it },
-                exit = slideOutVertically { it },
-                modifier = Modifier.align(Alignment.BottomCenter)
-            ) {
-                NarrationPanel(
-                    audioState = audioState.value,
-                    narrationEnabled = state.value.narrationEnabled,
-                    narrationTimerMinutes = state.value.narrationTimerMinutes,
-                    narrationStopAtChapterEnd = state.value.narrationStopAtChapterEnd,
-                    onPlayPause = {
-                        updateToolbarInteraction()
-                        if (!state.value.narrationEnabled) {
-                            viewModel.toggleNarration(true)
-                        }
-                        if (audioState.value.narrationSentenceId == null) {
+            if (showNarrationPanel.value) {
+                val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                ModalBottomSheet(
+                    onDismissRequest = { hideToolbar() },
+                    sheetState = sheetState,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    shape = MaterialTheme.shapes.large
+                ) {
+                    NarrationPanelContent(
+                        audioState = audioState.value,
+                        narrationEnabled = state.value.narrationEnabled,
+                        narrationTimerMinutes = state.value.narrationTimerMinutes,
+                        narrationStopAtChapterEnd = state.value.narrationStopAtChapterEnd,
+                        onPlayPause = {
+                            updateToolbarInteraction()
+                            if (!state.value.narrationEnabled) {
+                                viewModel.toggleNarration(true)
+                            }
+                            if (audioState.value.narrationSentenceId == null) {
+                                viewModel.playNextSentenceManual()
+                            } else {
+                                viewModel.pauseOrResumeSentence()
+                            }
+                        },
+                        onPrev = {
+                            updateToolbarInteraction()
+                            viewModel.playPreviousSentenceManual()
+                        },
+                        onNext = {
+                            updateToolbarInteraction()
                             viewModel.playNextSentenceManual()
-                        } else {
-                            viewModel.pauseOrResumeSentence()
-                        }
-                    },
-                    onPrev = {
-                        updateToolbarInteraction()
-                        viewModel.playPreviousSentenceManual()
-                    },
-                    onNext = {
-                        updateToolbarInteraction()
-                        viewModel.playNextSentenceManual()
-                    },
-                    onSpeedPreview = {
-                        updateToolbarInteraction()
-                        viewModel.previewNarrationSpeed(it)
-                    },
-                    onSpeedCommit = {
-                        updateToolbarInteraction()
-                        viewModel.setNarrationSpeed(it)
-                    },
-                    onTimerStart = {
-                        updateToolbarInteraction()
-                        viewModel.setNarrationStopAtChapterEnd(false)
-                        viewModel.startNarrationTimer(it)
-                    },
-                    onStopAtChapterEnd = {
-                        updateToolbarInteraction()
-                        viewModel.clearNarrationTimer()
-                        viewModel.setNarrationStopAtChapterEnd(true)
-                    },
-                    onTimerClear = {
-                        updateToolbarInteraction()
-                        viewModel.clearNarrationTimer()
-                        viewModel.setNarrationStopAtChapterEnd(false)
-                    },
-                    onRetry = {
-                        updateToolbarInteraction()
-                        viewModel.retryLastSentence()
-                    },
-                    onDismiss = { hideToolbar() }
-                )
+                        },
+                        onSpeedPreview = {
+                            updateToolbarInteraction()
+                            viewModel.previewNarrationSpeed(it)
+                        },
+                        onSpeedCommit = {
+                            updateToolbarInteraction()
+                            viewModel.setNarrationSpeed(it)
+                        },
+                        onTimerStart = {
+                            updateToolbarInteraction()
+                            viewModel.setNarrationStopAtChapterEnd(false)
+                            viewModel.startNarrationTimer(it)
+                        },
+                        onStopAtChapterEnd = {
+                            updateToolbarInteraction()
+                            viewModel.clearNarrationTimer()
+                            viewModel.setNarrationStopAtChapterEnd(true)
+                        },
+                        onTimerClear = {
+                            updateToolbarInteraction()
+                            viewModel.clearNarrationTimer()
+                            viewModel.setNarrationStopAtChapterEnd(false)
+                        },
+                        onRetry = {
+                            updateToolbarInteraction()
+                            viewModel.retryLastSentence()
+                        },
+                        onDismiss = { hideToolbar() }
+                    )
+                }
             }
-            
-            AnimatedVisibility(
-                visible = showFontSettings.value,
-                enter = slideInVertically { it },
-                exit = slideOutVertically { it },
-                modifier = Modifier.align(Alignment.BottomCenter)
-            ) {
-                FontSettingsPanel(
-                    currentFontSize = state.value.fontSizeLevel,
-                    onFontSizeChange = {
-                        updateToolbarInteraction()
-                        viewModel.setFontSize(it)
-                    },
-                    onDismiss = { hideToolbar() }
-                )
+
+            if (showFontSettings.value) {
+                val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                ModalBottomSheet(
+                    onDismissRequest = { hideToolbar() },
+                    sheetState = sheetState,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    shape = MaterialTheme.shapes.large
+                ) {
+                    FontSettingsPanelContent(
+                        currentFontSize = state.value.fontSizeLevel,
+                        onFontSizeChange = {
+                            updateToolbarInteraction()
+                            viewModel.setFontSize(it)
+                        },
+                        onDismiss = { hideToolbar() }
+                    )
+                }
             }
 
 
@@ -983,6 +990,19 @@ private fun FontSettingsPanel(
 }
 
 @Composable
+private fun FontSettingsPanelContent(
+    currentFontSize: Int,
+    onFontSizeChange: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    FontSettingsPanel(
+        currentFontSize = currentFontSize,
+        onFontSizeChange = onFontSizeChange,
+        onDismiss = onDismiss
+    )
+}
+
+@Composable
 private fun NarrationPanel(
     audioState: com.xuyutech.hongbaoshu.audio.AudioState,
     narrationEnabled: Boolean,
@@ -1222,6 +1242,41 @@ private fun NarrationPanel(
             Spacer(modifier = Modifier.height(16.dp))
         }
     }
+}
+
+@Composable
+private fun NarrationPanelContent(
+    audioState: com.xuyutech.hongbaoshu.audio.AudioState,
+    narrationEnabled: Boolean,
+    narrationTimerMinutes: Int?,
+    narrationStopAtChapterEnd: Boolean,
+    onPlayPause: () -> Unit,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    onSpeedPreview: (Float) -> Unit,
+    onSpeedCommit: (Float) -> Unit,
+    onTimerStart: (Int) -> Unit,
+    onStopAtChapterEnd: () -> Unit,
+    onTimerClear: () -> Unit,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    NarrationPanel(
+        audioState = audioState,
+        narrationEnabled = narrationEnabled,
+        narrationTimerMinutes = narrationTimerMinutes,
+        narrationStopAtChapterEnd = narrationStopAtChapterEnd,
+        onPlayPause = onPlayPause,
+        onPrev = onPrev,
+        onNext = onNext,
+        onSpeedPreview = onSpeedPreview,
+        onSpeedCommit = onSpeedCommit,
+        onTimerStart = onTimerStart,
+        onStopAtChapterEnd = onStopAtChapterEnd,
+        onTimerClear = onTimerClear,
+        onRetry = onRetry,
+        onDismiss = onDismiss
+    )
 }
 
 @Composable
