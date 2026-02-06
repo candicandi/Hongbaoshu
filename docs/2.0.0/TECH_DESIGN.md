@@ -8,6 +8,25 @@
 
 2.0 目标：阅读器与内容解耦，App 仅提供阅读器能力；文本/音频等通过“资源包（Pack）”导入并在书架管理。
 
+### 0.0 当前实现状态（2026-02-06）
+
+- 书架（Bookshelf）
+- `BookshelfScreen` 已作为默认入口，展示内置书与导入书列表，支持长按删除/校验/详情。
+- 书架卡片：状态徽章强制单行，避免换行导致卡片高度不一致。
+- 导入（Import）
+- 通过系统文件选择器（SAF）导入 Zip Pack：解压到临时目录校验后原子落盘到 `files/packs/<packId>/`。
+- `manifest.json` 必须存在且可解析；`formatVersion=1`；`text/book.json` 可解析且 ID 唯一性校验通过。
+- 封面解析：优先使用 `manifest.resources.cover.path`，同时会尝试探测常见封面路径（`images/cover.png|jpg|jpeg`、`cover.png|jpg|jpeg`）。
+- 封面显示：封面缺失或加载失败时使用“无封面”占位，避免空白。
+- 阅读（Reader）
+- 导入包的文本阅读已接入：非 `builtin` 时使用 `FilePackContentLoader` 从 pack 目录加载 `book.json`。
+- 进度与分页磁盘缓存已按 `packId` 隔离。
+- 朗读仅对 `builtin` 启用：导入书目前提示“朗读暂未接入”（后续需要 pack-aware 的音频资源解析）。
+- 测试资源包
+- `tests/fixtures/packs/hello_text_only_v1.hbs.zip`：基础文本包，带封面（`images/cover.png`）。
+- `tests/fixtures/packs/hello_text_no_cover_v1.hbs.zip`：无封面，验证占位。
+- `tests/fixtures/packs/hello_text_cover_root_v1.hbs.zip`：封面在根目录（`cover.png`），验证封面探测与 manifest 声明。
+
 ### 0.1 目标与非目标
 
 - 目标：书架、多书管理、资源包导入与校验、按 packId 隔离进度与缓存。
