@@ -1,5 +1,6 @@
 package com.xuyutech.hongbaoshu.bookshelf
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,21 +9,28 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,6 +62,10 @@ fun BookshelfScreen(
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    var actionTarget by remember { mutableStateOf<BookshelfBook?>(null) }
+    var showActions by remember { mutableStateOf(false) }
+    var showDetails by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -112,10 +124,63 @@ fun BookshelfScreen(
             items(books, key = { it.packId }) { book ->
                 BookshelfCard(
                     book = book,
-                    onClick = { onOpenBook(book) }
+                    onClick = { onOpenBook(book) },
+                    onLongPress = {
+                        actionTarget = book
+                        showActions = true
+                    }
                 )
             }
         }
+    }
+
+    if (showActions && actionTarget != null) {
+        BookActionsSheet(
+            book = actionTarget!!,
+            onDismiss = { showActions = false },
+            onOpen = {
+                showActions = false
+                onOpenBook(actionTarget!!)
+            },
+            onDetails = {
+                showActions = false
+                showDetails = true
+            },
+            onRevalidate = {
+                showActions = false
+                scope.launch { snackbarHostState.showSnackbar("重新校验开发中") }
+            },
+            onDelete = {
+                showActions = false
+                showDeleteConfirm = true
+            }
+        )
+    }
+
+    if (showDetails && actionTarget != null) {
+        BookDetailsDialog(
+            book = actionTarget!!,
+            onDismiss = { showDetails = false }
+        )
+    }
+
+    if (showDeleteConfirm && actionTarget != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text(text = "删除书籍？") },
+            text = { Text(text = "将从书架移除并删除本地资源（尚未实现）。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        scope.launch { snackbarHostState.showSnackbar("删除开发中") }
+                    }
+                ) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
+            }
+        )
     }
 }
 
@@ -148,9 +213,11 @@ private fun EmptyBookshelf(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun BookshelfCard(
     book: BookshelfBook,
     onClick: () -> Unit,
+    onLongPress: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     SoftCard(
@@ -159,7 +226,10 @@ private fun BookshelfCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onClick() }
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongPress
+                )
                 .padding(Dimens.m)
         ) {
             val coverShape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
@@ -190,4 +260,101 @@ private fun BookshelfCard(
             )
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BookActionsSheet(
+    book: BookshelfBook,
+    onDismiss: () -> Unit,
+    onOpen: () -> Unit,
+    onDetails: () -> Unit,
+    onRevalidate: () -> Unit,
+    onDelete: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        shape = MaterialTheme.shapes.large
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Dimens.l)
+                .padding(bottom = Dimens.xl)
+        ) {
+            Text(
+                text = book.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (book.author.isNotBlank()) {
+                Text(
+                    text = book.author,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = Dimens.xs)
+                )
+            }
+            StatusChip(text = book.statusText, modifier = Modifier.padding(top = Dimens.s))
+
+            PrimaryOutlinedButton(
+                text = "打开",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = Dimens.l),
+                onClick = onOpen
+            )
+            PrimaryOutlinedButton(
+                text = "详情",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = Dimens.s),
+                onClick = onDetails
+            )
+            PrimaryOutlinedButton(
+                text = "重新校验",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = Dimens.s),
+                onClick = onRevalidate
+            )
+            TextButton(
+                onClick = onDelete,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = Dimens.s)
+            ) {
+                Text(
+                    text = "删除",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BookDetailsDialog(
+    book: BookshelfBook,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = "书籍详情") },
+        text = {
+            Column {
+                Text(text = "标题：${book.title}")
+                if (book.author.isNotBlank()) Text(text = "作者：${book.author}")
+                if (!book.edition.isNullOrBlank()) Text(text = "版本：${book.edition}")
+                Text(text = "PackId：${book.packId}")
+                Text(text = "状态：${book.statusText}")
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        }
+    )
 }
