@@ -328,7 +328,11 @@ class AudioManagerImpl(
             
             if (mediaItems.isEmpty()) return false
 
-            narrationPlayer.setMediaItems(mediaItems, idx, 0L)
+            // buildNarrationMediaItems() may filter out missing audios, so we must map by mediaId.
+            val startMediaIndex = mediaItems.indexOfFirst { it.mediaId == startId }
+            if (startMediaIndex < 0) return false
+
+            narrationPlayer.setMediaItems(mediaItems, startMediaIndex, 0L)
             narrationPlayer.prepare()
             narrationPlayer.playWhenReady = true
             
