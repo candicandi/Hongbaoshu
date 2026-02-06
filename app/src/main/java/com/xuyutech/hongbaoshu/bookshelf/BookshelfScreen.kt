@@ -54,6 +54,7 @@ data class BookshelfBook(
 )
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun BookshelfScreen(
     books: List<BookshelfBook>,
     onOpenBook: (BookshelfBook) -> Unit,
