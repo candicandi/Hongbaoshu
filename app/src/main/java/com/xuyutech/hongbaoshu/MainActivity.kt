@@ -8,14 +8,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.xuyutech.hongbaoshu.bookshelf.BookshelfBook
 import com.xuyutech.hongbaoshu.bookshelf.BookshelfScreen
+import com.xuyutech.hongbaoshu.bookshelf.BookshelfViewModel
+import com.xuyutech.hongbaoshu.bookshelf.BookshelfViewModelFactory
 import com.xuyutech.hongbaoshu.audio.AudioManager
 import com.xuyutech.hongbaoshu.data.ContentLoader
 import com.xuyutech.hongbaoshu.di.ServiceLocator
@@ -24,6 +28,7 @@ import com.xuyutech.hongbaoshu.reader.ReaderViewModelFactory
 import com.xuyutech.hongbaoshu.reader.ReaderScreen
 import com.xuyutech.hongbaoshu.ui.theme.HongbaoshuTheme
 import com.xuyutech.hongbaoshu.storage.ProgressStore
+import com.xuyutech.hongbaoshu.pack.model.PackIndex
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,6 +48,7 @@ private fun HongbaoshuApp() {
     val audioManager: AudioManager = remember { ServiceLocator.provideAudioManager(context) }
     val progressStore: ProgressStore = remember { ServiceLocator.provideProgressStore(context) }
     val pageCacheStore = remember { ServiceLocator.providePageCacheStore(context) }
+    val packIndexStore = remember { ServiceLocator.providePackIndexStore(context) }
     
     // 启动时立即创建 ViewModel 并开始加载文档
     val viewModel: ReaderViewModel = viewModel(
@@ -59,6 +65,11 @@ private fun HongbaoshuApp() {
         onDispose { audioManager.release() }
     }
     val screen = remember { mutableStateOf(Screen.Bookshelf) }
+
+    val bookshelfViewModel: BookshelfViewModel = viewModel(
+        factory = BookshelfViewModelFactory(packIndexStore)
+    )
+    val packs = bookshelfViewModel.packs.collectAsState()
     
     // 监听加载状态
     val readerState = viewModel.state.observeAsState()
@@ -66,19 +77,27 @@ private fun HongbaoshuApp() {
     
     val book = readerState.value?.book
     val missingCount = readerState.value?.missingAudio?.size ?: 0
-    val statusText = when {
-        missingCount <= 0 -> "文本+音频"
-        missingCount < 10_000 -> "音频缺失($missingCount)"
-        else -> "音频缺失(较多)"
+    // Ensure builtin exists in bookshelf index.
+    LaunchedEffect(book) {
+        if (book != null) {
+            packIndexStore.upsert(
+                PackIndex(
+                    packId = "builtin",
+                    packVersion = 1,
+                    formatVersion = 1,
+                    bookTitle = book.title,
+                    bookAuthor = book.author,
+                    bookEdition = book.edition,
+                    importedAt = System.currentTimeMillis(),
+                    hasCover = true,
+                    hasFlipSound = true,
+                    hasNarration = true,
+                    missingNarrationSentenceCount = missingCount,
+                    isValid = true
+                )
+            )
+        }
     }
-    val builtinBook = BookshelfBook(
-        packId = "builtin",
-        title = book?.title ?: "内置书籍",
-        author = book?.author ?: "",
-        edition = book?.edition,
-        coverUri = "file:///android_asset/images/cover.png",
-        statusText = statusText
-    )
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -87,7 +106,21 @@ private fun HongbaoshuApp() {
         ReaderNavHost(
             screen = screen.value,
             isLoading = isLoading,
-            books = listOf(builtinBook),
+            books = packs.value.map { p ->
+                BookshelfBook(
+                    packId = p.packId,
+                    title = p.bookTitle,
+                    author = p.bookAuthor,
+                    edition = p.bookEdition,
+                    coverUri = if (p.packId == "builtin") "file:///android_asset/images/cover.png" else null,
+                    statusText = when {
+                        !p.isValid -> "不可用"
+                        !p.hasNarration -> "仅文本"
+                        p.missingNarrationSentenceCount > 0 -> "音频缺失(${p.missingNarrationSentenceCount})"
+                        else -> "文本+音频"
+                    }
+                )
+            },
             onOpenBook = { screen.value = Screen.Reader },
             onBackToBookshelf = {
                 viewModel.pauseNarration()
