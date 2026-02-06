@@ -141,8 +141,8 @@ private fun HongbaoshuApp() {
                 }
             },
             onRevalidatePack = { target ->
-                if (target.packId == "builtin" && book != null) {
-                    scope.launch {
+                scope.launch {
+                    if (target.packId == "builtin" && book != null) {
                         packIndexStore.upsert(
                             PackIndex(
                                 packId = "builtin",
@@ -159,7 +159,19 @@ private fun HongbaoshuApp() {
                                 isValid = true
                             )
                         )
+                        return@launch
                     }
+
+                    val existing = packIndexStore.find(target.packId) ?: return@launch
+                    val inspection = packFileStore.inspect(target.packId)
+                    packIndexStore.upsert(
+                        existing.copy(
+                            hasCover = inspection.hasCover,
+                            hasFlipSound = inspection.hasFlipSound,
+                            hasNarration = inspection.hasNarration,
+                            isValid = inspection.isValid
+                        )
+                    )
                 }
             },
             onBackToBookshelf = {

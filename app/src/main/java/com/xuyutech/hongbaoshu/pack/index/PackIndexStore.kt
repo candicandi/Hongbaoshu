@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.xuyutech.hongbaoshu.pack.model.PackIndex
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
@@ -24,6 +25,10 @@ class PackIndexStore(
     val packs: Flow<List<PackIndex>> = context.packIndexDataStore.data.map { prefs ->
         val raw = prefs[keyIndexes] ?: "[]"
         runCatching { json.decodeFromString<List<PackIndex>>(raw) }.getOrDefault(emptyList())
+    }
+
+    suspend fun find(packId: String): PackIndex? {
+        return packs.first().firstOrNull { it.packId == packId }
     }
 
     suspend fun upsert(pack: PackIndex) {
@@ -56,4 +61,3 @@ class PackIndexStore(
         return runCatching { json.decodeFromString<List<PackIndex>>(raw) }.getOrDefault(emptyList())
     }
 }
-
