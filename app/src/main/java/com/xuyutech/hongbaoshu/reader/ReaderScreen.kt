@@ -931,67 +931,48 @@ private fun FontSettingsPanel(
     onFontSizeChange: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
-    androidx.compose.material3.Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shadowElevation = 16.dp,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    // Content-only: ModalBottomSheet provides the outer container, shape, and background.
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp)
+            .padding(bottom = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // Drag Handle
-            Box(
-                modifier = Modifier
-                    .width(32.dp)
-                    .height(4.dp)
-                    .background(
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                        androidx.compose.foundation.shape.CircleShape
-                    )
-            )
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            // Title
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                 Text(
-                    text = "字体大小",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                 androidx.compose.material3.IconButton(onClick = onDismiss) {
-                     androidx.compose.material3.Icon(
-                         imageVector = androidx.compose.material.icons.Icons.Default.Close,
-                         contentDescription = "关闭"
-                     )
-                }
-            }
-           
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            // Slider
             Text(
-                text = "$currentFontSize",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                text = "字体大小",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
             )
-            
-            Slider(
-                value = currentFontSize.toFloat(),
-                onValueChange = { onFontSizeChange(it.roundToInt()) },
-                valueRange = com.xuyutech.hongbaoshu.reader.FONT_SIZE_MIN.toFloat()..com.xuyutech.hongbaoshu.reader.FONT_SIZE_MAX.toFloat(),
-                steps = (com.xuyutech.hongbaoshu.reader.FONT_SIZE_MAX - com.xuyutech.hongbaoshu.reader.FONT_SIZE_MIN) / 2 - 1
-            )
-            
-            Spacer(modifier = Modifier.height(24.dp))
+            androidx.compose.material3.IconButton(onClick = onDismiss) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.Close,
+                    contentDescription = "关闭"
+                )
+            }
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = "$currentFontSize",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Slider(
+            value = currentFontSize.toFloat(),
+            onValueChange = { onFontSizeChange(it.roundToInt()) },
+            valueRange = com.xuyutech.hongbaoshu.reader.FONT_SIZE_MIN.toFloat()..com.xuyutech.hongbaoshu.reader.FONT_SIZE_MAX.toFloat(),
+            steps = (com.xuyutech.hongbaoshu.reader.FONT_SIZE_MAX - com.xuyutech.hongbaoshu.reader.FONT_SIZE_MIN) / 2 - 1
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
     }
 }
 
@@ -1025,228 +1006,203 @@ private fun NarrationPanel(
     onRetry: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    androidx.compose.material3.Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shadowElevation = 16.dp,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    // Content-only: ModalBottomSheet provides the outer container, shape, and background.
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp)
+            .padding(bottom = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
         ) {
-            // Drag Handle
-            Box(
-                modifier = Modifier
-                    .width(32.dp)
-                    .height(4.dp)
-                    .background(
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                        androidx.compose.foundation.shape.CircleShape
-                    )
-            )
-            Spacer(modifier = Modifier.height(24.dp))
+            Column {
+                Text(
+                    text = "朗读",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                val status = when {
+                    !narrationEnabled -> "未开启"
+                    audioState.narrationPlaying -> "正在播放"
+                    audioState.narrationSentenceId != null -> "已暂停"
+                    else -> "准备就绪"
+                }
+                Text(
+                    text = status,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
-            // Title & Status
+            androidx.compose.material3.IconButton(onClick = onDismiss) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.Close,
+                    contentDescription = "关闭"
+                )
+            }
+        }
+
+        if (audioState.narrationError != null) {
+            Text(
+                text = audioState.narrationError,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+            TextButton(onClick = onRetry) {
+                Text("重试")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            androidx.compose.material3.FilledTonalIconButton(
+                onClick = onPrev,
+                modifier = Modifier.size(48.dp),
+                colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                )
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.SkipPrevious,
+                    contentDescription = "上一句"
+                )
+            }
+
+            androidx.compose.material3.FilledIconButton(
+                onClick = onPlayPause,
+                modifier = Modifier.size(72.dp)
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = if (audioState.narrationPlaying) {
+                        androidx.compose.material.icons.Icons.Default.Pause
+                    } else {
+                        androidx.compose.material.icons.Icons.Default.PlayArrow
+                    },
+                    contentDescription = "播放暂停",
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+
+            androidx.compose.material3.FilledTonalIconButton(
+                onClick = onNext,
+                modifier = Modifier.size(48.dp),
+                colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                )
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.SkipNext,
+                    contentDescription = "下一句"
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Column(modifier = Modifier.fillMaxWidth()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
-            ) {
-                Column {
-                    Text(
-                        text = "朗读",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    val status = when {
-                        !narrationEnabled -> "未开启"
-                        audioState.narrationPlaying -> "正在播放"
-                        audioState.narrationSentenceId != null -> "已暂停"
-                        else -> "准备就绪"
-                    }
-                    Text(
-                        text = status,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                
-                androidx.compose.material3.IconButton(onClick = onDismiss) {
-                     androidx.compose.material3.Icon(
-                         imageVector = androidx.compose.material.icons.Icons.Default.Close,
-                         contentDescription = "关闭"
-                     )
-                }
-            }
-            
-            if (audioState.narrationError != null) {
-                Text(
-                    text = audioState.narrationError,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-                TextButton(onClick = onRetry) {
-                    Text("重试")
-                }
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // Playback Controls
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Prev
-                androidx.compose.material3.FilledTonalIconButton(
-                    onClick = onPrev,
-                    modifier = Modifier.size(48.dp),
-                    colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
-                    )
-                ) {
-                    androidx.compose.material3.Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Default.SkipPrevious,
-                        contentDescription = "上一句"
-                    )
-                }
-
-                // Play/Pause (Big)
-                androidx.compose.material3.FilledIconButton(
-                    onClick = onPlayPause,
-                    modifier = Modifier.size(72.dp)
-                ) {
-                    androidx.compose.material3.Icon(
-                        imageVector = if (audioState.narrationPlaying) {
-                            androidx.compose.material.icons.Icons.Default.Pause
-                        } else {
-                            androidx.compose.material.icons.Icons.Default.PlayArrow
-                        },
-                        contentDescription = "播放暂停",
-                        modifier = Modifier.size(32.dp)
-                    )
-                }
-
-                // Next
-                androidx.compose.material3.FilledTonalIconButton(
-                    onClick = onNext,
-                    modifier = Modifier.size(48.dp),
-                    colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
-                    )
-                ) {
-                    androidx.compose.material3.Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Default.SkipNext,
-                        contentDescription = "下一句"
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // Speed Control
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "语速",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Text(
-                        text = String.format(java.util.Locale.US, "%.2fx", audioState.narrationSpeed),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                val minSpeed = 0.75f
-                val maxSpeed = 1.25f
-                val step = 0.05f
-                val steps = (((maxSpeed - minSpeed) / step).toInt() - 1).coerceAtLeast(0)
-                var sliderValue by remember { mutableStateOf(audioState.narrationSpeed) }
-                LaunchedEffect(audioState.narrationSpeed) {
-                    sliderValue = audioState.narrationSpeed
-                }
-                
-                Slider(
-                    value = sliderValue.coerceIn(minSpeed, maxSpeed),
-                    onValueChange = { raw ->
-                        val stepsFromMin = ((raw.coerceIn(minSpeed, maxSpeed) - minSpeed) / step).roundToInt()
-                        val snapped = (minSpeed + stepsFromMin * step).coerceIn(minSpeed, maxSpeed)
-                        sliderValue = snapped
-                        onSpeedPreview(snapped)
-                    },
-                    onValueChangeFinished = {
-                        onSpeedCommit(sliderValue.coerceIn(minSpeed, maxSpeed))
-                    },
-                    valueRange = minSpeed..maxSpeed,
-                    steps = steps
+                Text(
+                    text = "语速",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    text = String.format(java.util.Locale.US, "%.2fx", audioState.narrationSpeed),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
-            
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Timer Control
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "定时关闭",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    if (narrationTimerMinutes != null || narrationStopAtChapterEnd) {
-                        TextButton(
-                            onClick = onTimerClear,
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-                            modifier = Modifier.height(24.dp)
-                        ) {
-                            Text("关闭定时")
-                        }
+            val minSpeed = 0.75f
+            val maxSpeed = 1.25f
+            val step = 0.05f
+            val steps = (((maxSpeed - minSpeed) / step).toInt() - 1).coerceAtLeast(0)
+            var sliderValue by remember { mutableStateOf(audioState.narrationSpeed) }
+            LaunchedEffect(audioState.narrationSpeed) {
+                sliderValue = audioState.narrationSpeed
+            }
+
+            Slider(
+                value = sliderValue.coerceIn(minSpeed, maxSpeed),
+                onValueChange = { raw ->
+                    val stepsFromMin = ((raw.coerceIn(minSpeed, maxSpeed) - minSpeed) / step).roundToInt()
+                    val snapped = (minSpeed + stepsFromMin * step).coerceIn(minSpeed, maxSpeed)
+                    sliderValue = snapped
+                    onSpeedPreview(snapped)
+                },
+                onValueChangeFinished = {
+                    onSpeedCommit(sliderValue.coerceIn(minSpeed, maxSpeed))
+                },
+                valueRange = minSpeed..maxSpeed,
+                steps = steps
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "定时关闭",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                if (narrationTimerMinutes != null || narrationStopAtChapterEnd) {
+                    TextButton(
+                        onClick = onTimerClear,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                        modifier = Modifier.height(24.dp)
+                    ) {
+                        Text("关闭定时")
                     }
                 }
-                Spacer(modifier = Modifier.height(12.dp))
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val timerOptions = listOf(15, 30, 60)
-                    timerOptions.forEach { minutes ->
-                        val selected = narrationTimerMinutes == minutes && !narrationStopAtChapterEnd
-                        TimerChip(
-                            label = "${minutes}分钟",
-                            selected = selected,
-                            onClick = { onTimerStart(minutes) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    
-                    val endChapterSelected = narrationStopAtChapterEnd
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val timerOptions = listOf(15, 30, 60)
+                timerOptions.forEach { minutes ->
+                    val selected = narrationTimerMinutes == minutes && !narrationStopAtChapterEnd
                     TimerChip(
-                        label = "读完本章",
-                        selected = endChapterSelected,
-                        onClick = onStopAtChapterEnd,
+                        label = "${minutes}分钟",
+                        selected = selected,
+                        onClick = { onTimerStart(minutes) },
                         modifier = Modifier.weight(1f)
                     )
                 }
+
+                val endChapterSelected = narrationStopAtChapterEnd
+                TimerChip(
+                    label = "读完本章",
+                    selected = endChapterSelected,
+                    onClick = onStopAtChapterEnd,
+                    modifier = Modifier.weight(1f)
+                )
             }
-            
-            // Safe area spacing
-            Spacer(modifier = Modifier.height(16.dp))
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }
 
