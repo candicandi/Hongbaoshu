@@ -180,7 +180,7 @@ fun BookshelfScreen(
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text(text = "删除书籍？") },
-            text = { Text(text = "将从书架移除并删除本地资源（尚未实现）。") },
+            text = { Text(text = "将从书架移除，并删除本地资源与缓存。") },
             confirmButton = {
                 TextButton(
                     onClick = {

@@ -51,6 +51,7 @@ private fun HongbaoshuApp() {
     val progressStore: ProgressStore = remember { ServiceLocator.provideProgressStore(context) }
     val pageCacheStore = remember { ServiceLocator.providePageCacheStore(context) }
     val packIndexStore = remember { ServiceLocator.providePackIndexStore(context) }
+    val packFileStore = remember { ServiceLocator.providePackFileStore(context) }
     
     // 启动时立即创建 ViewModel 并开始加载文档
     val viewModel: ReaderViewModel = viewModel(
@@ -134,7 +135,10 @@ private fun HongbaoshuApp() {
                 screen.value = Screen.Reader
             },
             onDeletePack = { target ->
-                scope.launch { packIndexStore.delete(target.packId) }
+                scope.launch {
+                    packIndexStore.delete(target.packId)
+                    packFileStore.deletePack(target.packId)
+                }
             },
             onRevalidatePack = { target ->
                 if (target.packId == "builtin" && book != null) {
