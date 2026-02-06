@@ -116,6 +116,7 @@ private fun ReaderNavHost(
             books = books,
             onOpenBook = onOpenBook,
             onImport = {},
+            isLoading = isLoading,
             modifier = Modifier.fillMaxSize()
         )
         Screen.Reader -> ReaderScreen(

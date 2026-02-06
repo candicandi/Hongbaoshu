@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -48,6 +49,7 @@ fun BookshelfScreen(
     books: List<BookshelfBook>,
     onOpenBook: (BookshelfBook) -> Unit,
     onImport: () -> Unit,
+    isLoading: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
@@ -58,25 +60,34 @@ fun BookshelfScreen(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = { Text(text = "红宝匣", style = MaterialTheme.typography.headlineMedium) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
-                ),
-                actions = {
-                    PrimaryOutlinedButton(
-                        text = "导入",
-                        modifier = Modifier.padding(end = Dimens.l),
-                        onClick = {
-                            scope.launch {
-                                snackbarHostState.showSnackbar("导入功能开发中")
+            Column {
+                TopAppBar(
+                    title = { Text(text = "红宝匣", style = MaterialTheme.typography.headlineMedium) },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background,
+                        titleContentColor = MaterialTheme.colorScheme.onBackground
+                    ),
+                    actions = {
+                        PrimaryOutlinedButton(
+                            text = "导入",
+                            modifier = Modifier.padding(end = Dimens.l),
+                            onClick = {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("导入功能开发中")
+                                }
+                                onImport()
                             }
-                            onImport()
-                        }
+                        )
+                    }
+                )
+                if (isLoading) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 }
-            )
+            }
         }
     ) { innerPadding ->
         if (books.isEmpty()) {
