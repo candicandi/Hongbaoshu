@@ -73,6 +73,7 @@ private fun HongbaoshuApp() {
     )
     val packs = bookshelfViewModel.packs.collectAsState()
     val scope = rememberCoroutineScope()
+    val bookshelfMessage = remember { mutableStateOf<String?>(null) }
     
     // 监听加载状态
     val readerState = viewModel.state.observeAsState()
@@ -125,6 +126,10 @@ private fun HongbaoshuApp() {
                 )
             },
             onOpenBook = { selected ->
+                if (selected.packId != "builtin") {
+                    bookshelfMessage.value = "该书的阅读功能接入中"
+                    return@ReaderNavHost
+                }
                 scope.launch { packIndexStore.markOpened(selected.packId) }
                 screen.value = Screen.Reader
             },
@@ -157,6 +162,8 @@ private fun HongbaoshuApp() {
                 viewModel.pauseNarration()
                 screen.value = Screen.Bookshelf
             },
+            message = bookshelfMessage.value,
+            onMessageShown = { bookshelfMessage.value = null },
             viewModel = viewModel,
             audioManager = audioManager
         )
@@ -174,6 +181,8 @@ private fun ReaderNavHost(
     onDeletePack: (BookshelfBook) -> Unit,
     onRevalidatePack: (BookshelfBook) -> Unit,
     onBackToBookshelf: () -> Unit,
+    message: String?,
+    onMessageShown: () -> Unit,
     viewModel: ReaderViewModel,
     audioManager: AudioManager
 ) {
@@ -184,6 +193,8 @@ private fun ReaderNavHost(
             onImport = {},
             onDeletePack = onDeletePack,
             onRevalidatePack = onRevalidatePack,
+            message = message,
+            onMessageShown = onMessageShown,
             isLoading = isLoading,
             modifier = Modifier.fillMaxSize()
         )

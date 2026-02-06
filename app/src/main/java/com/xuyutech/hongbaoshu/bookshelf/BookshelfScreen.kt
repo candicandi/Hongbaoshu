@@ -27,6 +27,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +60,8 @@ fun BookshelfScreen(
     onImport: () -> Unit,
     onDeletePack: (BookshelfBook) -> Unit = {},
     onRevalidatePack: (BookshelfBook) -> Unit = {},
+    message: String? = null,
+    onMessageShown: () -> Unit = {},
     isLoading: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -134,6 +137,12 @@ fun BookshelfScreen(
                 )
             }
         }
+    }
+
+    LaunchedEffect(message) {
+        val text = message ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(text)
+        onMessageShown()
     }
 
     if (showActions && actionTarget != null) {
