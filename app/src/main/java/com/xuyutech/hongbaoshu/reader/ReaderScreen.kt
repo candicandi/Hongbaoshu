@@ -2,6 +2,7 @@
 
 package com.xuyutech.hongbaoshu.reader
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PlayArrow
@@ -126,6 +127,16 @@ fun ReaderScreen(
 ) {
     val state = viewModel.state.observeAsState(ReaderState())
     val audioState = audioManager.state.collectAsState()
+
+    // Intercept system back (including edge-swipe) so it navigates back to bookshelf
+    // instead of finishing the Activity.
+    BackHandler(enabled = true) {
+        if (state.value.narrationEnabled) {
+            viewModel.pauseNarration()
+        }
+        onBack()
+    }
+
     val showToc = remember { mutableStateOf(false) }
     val showNarrationPanel = remember { mutableStateOf(false) }
     val showFontSettings = remember { mutableStateOf(false) }
