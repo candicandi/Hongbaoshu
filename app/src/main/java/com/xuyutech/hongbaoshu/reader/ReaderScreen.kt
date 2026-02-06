@@ -1,6 +1,6 @@
-package com.xuyutech.hongbaoshu.reader
-
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
+package com.xuyutech.hongbaoshu.reader
 
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.filled.Menu
