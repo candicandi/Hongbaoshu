@@ -6,6 +6,7 @@ import com.xuyutech.hongbaoshu.audio.AudioManagerImpl
 import com.xuyutech.hongbaoshu.data.ContentLoader
 import com.xuyutech.hongbaoshu.data.ContentLoaderImpl
 import com.xuyutech.hongbaoshu.pack.index.PackIndexStore
+import com.xuyutech.hongbaoshu.pack.importer.ZipPackImporter
 import com.xuyutech.hongbaoshu.pack.storage.PackFileStore
 import com.xuyutech.hongbaoshu.storage.PageCacheStore
 import com.xuyutech.hongbaoshu.storage.ProgressStore
@@ -36,6 +37,10 @@ object ServiceLocator {
     @android.annotation.SuppressLint("StaticFieldLeak") // Holds ApplicationContext, safe
     @Volatile
     private var packFileStore: PackFileStore? = null
+
+    @android.annotation.SuppressLint("StaticFieldLeak") // Holds ApplicationContext, safe
+    @Volatile
+    private var packImporter: ZipPackImporter? = null
 
     fun provideContentLoader(): ContentLoader =
         loader ?: synchronized(this) {
@@ -69,6 +74,15 @@ object ServiceLocator {
             packFileStore ?: PackFileStore(context.applicationContext).also { packFileStore = it }
         }
 
+    fun providePackImporter(context: Context): ZipPackImporter =
+        packImporter ?: synchronized(this) {
+            packImporter ?: ZipPackImporter(
+                context = context.applicationContext,
+                packIndexStore = providePackIndexStore(context),
+                packFileStore = providePackFileStore(context)
+            ).also { packImporter = it }
+        }
+
     fun clear() {
         audio?.release()
         audio = null
@@ -77,5 +91,6 @@ object ServiceLocator {
         pageCacheStore = null
         packIndexStore = null
         packFileStore = null
+        packImporter = null
     }
 }
