@@ -791,31 +791,9 @@ private fun ReaderTopBar(
     chapterTitle: String,
     onBack: () -> Unit
 ) {
-    androidx.compose.material3.Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        shadowElevation = 0.dp,
-        tonalElevation = 2.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars)
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            androidx.compose.material3.IconButton(onClick = onBack) {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "返回"
-                )
-            }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 8.dp)
-            ) {
+    TopAppBar(
+        title = {
+            Column {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
@@ -831,8 +809,22 @@ private fun ReaderTopBar(
                     )
                 }
             }
-        }
-    }
+        },
+        navigationIcon = {
+            androidx.compose.material3.IconButton(onClick = onBack) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回"
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            navigationIconContentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        windowInsets = WindowInsets.statusBars
+    )
 }
 
 @Composable
@@ -846,51 +838,65 @@ private fun ReaderBottomBar(
     isNightMode: Boolean,
     onToggleNightMode: () -> Unit
 ) {
-    androidx.compose.material3.Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainer,
+    NavigationBar(
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
         contentColor = MaterialTheme.colorScheme.onSurface,
-        shadowElevation = 8.dp,
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+        tonalElevation = 6.dp
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 12.dp)
-                .padding(bottom = 8.dp), // Extra padding for navigation bar if needed, or just visual balance
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            BottomBarAction(
-                icon = androidx.compose.material.icons.Icons.Default.Menu,
-                label = "目录",
-                onClick = onOpenToc
-            )
-            BottomBarAction(
-                icon = playPauseIcon,
-                label = playPauseLabel,
-                onClick = onPlayPause
-            )
-            BottomBarAction(
-                icon = androidx.compose.material.icons.Icons.Default.Info,
-                label = "朗读",
-                onClick = onOpenNarrationPanel
-            )
-            BottomBarAction(
-                icon = androidx.compose.material.icons.Icons.Default.Settings,
-                label = "字体",
-                onClick = onOpenFontSettings
-            )
-            BottomBarAction(
-                icon = if (isNightMode) {
-                    androidx.compose.material.icons.Icons.Filled.LightMode
-                } else {
-                    androidx.compose.material.icons.Icons.Filled.DarkMode
-                },
-                label = if (isNightMode) "日间" else "夜间",
-                onClick = onToggleNightMode
-            )
-        }
+        NavigationBarItem(
+            selected = false,
+            onClick = onOpenToc,
+            icon = {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.Menu,
+                    contentDescription = "目录"
+                )
+            },
+            label = { Text("目录", style = MaterialTheme.typography.labelSmall) }
+        )
+        NavigationBarItem(
+            selected = false,
+            onClick = onPlayPause,
+            icon = { androidx.compose.material3.Icon(imageVector = playPauseIcon, contentDescription = playPauseLabel) },
+            label = { Text(playPauseLabel, style = MaterialTheme.typography.labelSmall) }
+        )
+        NavigationBarItem(
+            selected = false,
+            onClick = onOpenNarrationPanel,
+            icon = {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.Info,
+                    contentDescription = "朗读"
+                )
+            },
+            label = { Text("朗读", style = MaterialTheme.typography.labelSmall) }
+        )
+        NavigationBarItem(
+            selected = false,
+            onClick = onOpenFontSettings,
+            icon = {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.Settings,
+                    contentDescription = "字体"
+                )
+            },
+            label = { Text("字体", style = MaterialTheme.typography.labelSmall) }
+        )
+        NavigationBarItem(
+            selected = false,
+            onClick = onToggleNightMode,
+            icon = {
+                androidx.compose.material3.Icon(
+                    imageVector = if (isNightMode) {
+                        androidx.compose.material.icons.Icons.Filled.LightMode
+                    } else {
+                        androidx.compose.material.icons.Icons.Filled.DarkMode
+                    },
+                    contentDescription = if (isNightMode) "日间" else "夜间"
+                )
+            },
+            label = { Text(if (isNightMode) "日间" else "夜间", style = MaterialTheme.typography.labelSmall) }
+        )
     }
 }
 
