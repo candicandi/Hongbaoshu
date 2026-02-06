@@ -16,9 +16,15 @@ data class PackInspection(
 class PackFileStore(
     private val context: Context
 ) {
-    fun packDir(packId: String): File = File(File(context.filesDir, "packs"), packId)
+    fun packDir(packId: String): File {
+        val root = File(context.filesDir, "packs").also { it.mkdirs() }
+        return File(root, packId)
+    }
 
-    fun pageCacheDir(packId: String): File = File(File(context.cacheDir, "page_cache"), packId)
+    fun pageCacheDir(packId: String): File {
+        val root = File(context.cacheDir, "page_cache").also { it.mkdirs() }
+        return File(root, packId)
+    }
 
     fun inspect(packId: String): PackInspection {
         return PackInspector.inspectPackRoot(packDir(packId))
