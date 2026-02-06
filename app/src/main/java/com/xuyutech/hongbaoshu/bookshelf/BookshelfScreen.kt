@@ -1,11 +1,13 @@
 package com.xuyutech.hongbaoshu.bookshelf
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -38,8 +40,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.SubcomposeAsyncImage
-import coil.compose.SubcomposeAsyncImageContent
+import coil.compose.AsyncImagePainter
+import coil.compose.rememberAsyncImagePainter
 import com.xuyutech.hongbaoshu.ui.components.PrimaryOutlinedButton
 import com.xuyutech.hongbaoshu.ui.components.SoftCard
 import com.xuyutech.hongbaoshu.ui.components.StatusChip
@@ -289,37 +291,28 @@ private fun BookCover(
     coverUri: String?,
     modifier: Modifier = Modifier
 ) {
-    val placeholder: @Composable () -> Unit = {
-        Box(
-            modifier = modifier,
-            contentAlignment = Alignment.Center
-        ) {
-            // Paper-like placeholder: no heavy contrast, no icon spam.
-            androidx.compose.foundation.Canvas(modifier = Modifier.matchParentSize()) {
-                drawRect(color = MaterialTheme.colorScheme.surfaceVariant)
-            }
+    val resolved = coverUri?.takeIf { it.isNotBlank() }
+    val painter = if (resolved == null) null else rememberAsyncImagePainter(resolved)
+    val showImage = painter != null && painter.state is AsyncImagePainter.State.Success
+
+    Box(
+        modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center
+    ) {
+        if (showImage && painter != null) {
+            Image(
+                painter = painter,
+                contentDescription = "封面",
+                modifier = Modifier.matchParentSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
             Text(
                 text = "无封面",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-    }
-
-    val model = coverUri?.takeIf { it.isNotBlank() } ?: run {
-        placeholder()
-        return
-    }
-
-    SubcomposeAsyncImage(
-        model = model,
-        contentDescription = "封面",
-        modifier = modifier,
-        contentScale = ContentScale.Crop,
-        loading = { placeholder() },
-        error = { placeholder() }
-    ) {
-        SubcomposeAsyncImageContent()
     }
 }
 
