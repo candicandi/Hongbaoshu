@@ -100,6 +100,7 @@ internal fun areAllChaptersCachedForFontSize(
 
 class ReaderViewModel(
     application: Application,
+    private val packId: String,
     private val contentLoader: ContentLoader,
     private val progressStore: ProgressStore,
     private val audioManager: AudioManager,
@@ -359,7 +360,7 @@ class ReaderViewModel(
      * 生成持久化缓存 key（不含章节ID，用于整本书）
      */
     private fun diskCacheKey(fontSizeLevel: Int, widthPx: Int, heightPx: Int): String {
-        return "${fontSizeLevel}_${widthPx}_${heightPx}"
+        return "${packId}_${fontSizeLevel}_${widthPx}_${heightPx}"
     }
     
     fun computeCurrentChapter(
@@ -507,7 +508,7 @@ class ReaderViewModel(
             val result = runCatching {
                 withContext(Dispatchers.IO) {
                     val bookResult = contentLoader.loadBook(getApplication())
-                    val saved = progressStore.progress.first()
+                    val saved = progressStore.progress(packId).first()
                     Pair(bookResult, saved)
                 }
             }
@@ -766,6 +767,7 @@ class ReaderViewModel(
         val finalPage = pageIndex ?: current.pageIndex
         viewModelScope.launch(Dispatchers.IO) {
             progressStore.save(
+                packId = packId,
                 ProgressState(
                     chapterIndex = finalChapter,
                     pageIndex = finalPage,

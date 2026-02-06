@@ -10,6 +10,7 @@ import com.xuyutech.hongbaoshu.audio.AudioManager
 
 class ReaderViewModelFactory(
     private val app: Application,
+    private val packId: String,
     private val loader: ContentLoader,
     private val progressStore: ProgressStore,
     private val audioManager: AudioManager,
@@ -18,7 +19,7 @@ class ReaderViewModelFactory(
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(ReaderViewModel::class.java)) {
-            return ReaderViewModel(app, loader, progressStore, audioManager, pageCacheStore) as T
+            return ReaderViewModel(app, packId, loader, progressStore, audioManager, pageCacheStore) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }
