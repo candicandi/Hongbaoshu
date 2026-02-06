@@ -69,6 +69,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.livedata.observeAsState
@@ -123,6 +124,7 @@ data class ToolBarState(
 fun ReaderScreen(
     viewModel: ReaderViewModel,
     audioManager: AudioManager,
+    narrationControlsEnabled: Boolean = true,
     onBack: () -> Unit
 ) {
     val state = viewModel.state.observeAsState(ReaderState())
@@ -143,6 +145,7 @@ fun ReaderScreen(
     val toolbarState = remember { mutableStateOf(ToolBarState()) }
     var suppressNextCenterTap by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val uiScope = rememberCoroutineScope()
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
     
@@ -168,6 +171,13 @@ fun ReaderScreen(
         state.value.toastMessage?.let { message ->
             snackbarHostState.showSnackbar(message)
             viewModel.clearToast()
+        }
+    }
+
+    val showNarrationUnsupported = {
+        // Unified message for now; later can be pack-capability specific.
+        uiScope.launch {
+            snackbarHostState.showSnackbar("导入书籍的朗读功能暂未接入")
         }
     }
 
@@ -604,6 +614,11 @@ fun ReaderScreen(
                     },
                     onPlayPause = {
                         updateToolbarInteraction()
+                        if (!narrationControlsEnabled) {
+                            viewModel.toggleNarration(false)
+                            showNarrationUnsupported()
+                            return@ReaderBottomBar
+                        }
                         if (!state.value.narrationEnabled) {
                             viewModel.toggleNarration(true)
                         }
@@ -617,6 +632,10 @@ fun ReaderScreen(
                     playPauseLabel = playPauseLabel,
                     onOpenNarrationPanel = {
                         updateToolbarInteraction()
+                        if (!narrationControlsEnabled) {
+                            showNarrationUnsupported()
+                            return@ReaderBottomBar
+                        }
                         openNarrationPanel()
                     },
                     onOpenFontSettings = {

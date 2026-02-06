@@ -32,6 +32,7 @@ import com.xuyutech.hongbaoshu.reader.ReaderScreen
 import com.xuyutech.hongbaoshu.ui.theme.HongbaoshuTheme
 import com.xuyutech.hongbaoshu.storage.ProgressStore
 import com.xuyutech.hongbaoshu.pack.model.PackIndex
+import com.xuyutech.hongbaoshu.pack.loader.FilePackContentLoader
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -49,19 +50,28 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun HongbaoshuApp() {
     val context = LocalContext.current
-    val loader: ContentLoader = remember { ServiceLocator.provideContentLoader() }
     val audioManager: AudioManager = remember { ServiceLocator.provideAudioManager(context) }
     val progressStore: ProgressStore = remember { ServiceLocator.provideProgressStore(context) }
     val pageCacheStore = remember { ServiceLocator.providePageCacheStore(context) }
     val packIndexStore = remember { ServiceLocator.providePackIndexStore(context) }
     val packFileStore = remember { ServiceLocator.providePackFileStore(context) }
     val packImporter = remember { ServiceLocator.providePackImporter(context) }
+
+    val activePackId = remember { mutableStateOf("builtin") }
+    val loaderForPack: ContentLoader = remember(activePackId.value) {
+        if (activePackId.value == "builtin") {
+            ServiceLocator.provideContentLoader()
+        } else {
+            FilePackContentLoader(packFileStore.packDir(activePackId.value))
+        }
+    }
     
-    // 启动时立即创建 ViewModel 并开始加载文档
     val viewModel: ReaderViewModel = viewModel(
+        key = "reader_${activePackId.value}",
         factory = ReaderViewModelFactory(
             context.applicationContext as android.app.Application,
-            loader,
+            activePackId.value,
+            loaderForPack,
             progressStore,
             audioManager,
             pageCacheStore
@@ -97,8 +107,8 @@ private fun HongbaoshuApp() {
     val book = readerState.value?.book
     val missingCount = readerState.value?.missingAudio?.size ?: 0
     // Ensure builtin exists in bookshelf index.
-    LaunchedEffect(book) {
-        if (book != null) {
+    LaunchedEffect(book, activePackId.value) {
+        if (activePackId.value == "builtin" && book != null) {
             packIndexStore.upsert(
                 PackIndex(
                     packId = "builtin",
@@ -145,11 +155,8 @@ private fun HongbaoshuApp() {
                 )
             },
             onOpenBook = { selected ->
-                if (selected.packId != "builtin") {
-                    bookshelfMessage.value = "该书的阅读功能接入中"
-                    return@ReaderNavHost
-                }
                 scope.launch { packIndexStore.markOpened(selected.packId) }
+                activePackId.value = selected.packId
                 screen.value = Screen.Reader
             },
             onDeletePack = { target ->
@@ -202,6 +209,7 @@ private fun HongbaoshuApp() {
                 importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
             },
             viewModel = viewModel,
+            narrationControlsEnabled = activePackId.value == "builtin",
             audioManager = audioManager
         )
     }
@@ -222,6 +230,7 @@ private fun ReaderNavHost(
     onMessageShown: () -> Unit,
     onImport: () -> Unit,
     viewModel: ReaderViewModel,
+    narrationControlsEnabled: Boolean,
     audioManager: AudioManager
 ) {
     when (screen) {
@@ -239,6 +248,7 @@ private fun ReaderNavHost(
         Screen.Reader -> ReaderScreen(
             viewModel = viewModel,
             audioManager = audioManager,
+            narrationControlsEnabled = narrationControlsEnabled,
             onBack = onBackToBookshelf
         )
     }
