@@ -396,7 +396,12 @@ fun ReaderScreen(
                 audioState.value.narrationSentenceId == null &&
                 currentPageSentences.isNotEmpty()) {
                 narrationInitialized = true
-                viewModel.playSentence(currentPageSentences.first())
+                val firstPlayable = currentPageSentences.firstOrNull { it !in state.value.missingAudio }
+                if (firstPlayable != null) {
+                    viewModel.playSentence(firstPlayable)
+                } else {
+                    viewModel.playSentence(currentPageSentences.first())
+                }
             }
         }
         
@@ -408,7 +413,12 @@ fun ReaderScreen(
             if (state.value.needPlayFirstSentence && currentPageSentences.isNotEmpty()) {
                 viewModel.clearPlayFirstSentence()
                 viewModel.resetNarrationState()
-                viewModel.playSentence(currentPageSentences.first())
+                val firstPlayable = currentPageSentences.firstOrNull { it !in state.value.missingAudio }
+                if (firstPlayable != null) {
+                    viewModel.playSentence(firstPlayable)
+                } else {
+                    viewModel.playSentence(currentPageSentences.first())
+                }
             }
         }
 
