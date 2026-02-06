@@ -33,6 +33,7 @@ import com.xuyutech.hongbaoshu.ui.theme.HongbaoshuTheme
 import com.xuyutech.hongbaoshu.storage.ProgressStore
 import com.xuyutech.hongbaoshu.pack.model.PackIndex
 import kotlinx.coroutines.launch
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -125,12 +126,16 @@ private fun HongbaoshuApp() {
             screen = screen.value,
             isLoading = isLoading,
             books = packs.value.map { p ->
+                val coverUri = run {
+                    val cover = File(packFileStore.packDir(p.packId), "images/cover.png")
+                    if (cover.exists()) cover.toURI().toString() else null
+                }
                 BookshelfBook(
                     packId = p.packId,
                     title = p.bookTitle,
                     author = p.bookAuthor,
                     edition = p.bookEdition,
-                    coverUri = if (p.packId == "builtin") "file:///android_asset/images/cover.png" else null,
+                    coverUri = if (p.packId == "builtin") "file:///android_asset/images/cover.png" else coverUri,
                     statusText = when {
                         !p.isValid -> "不可用"
                         !p.hasNarration -> "仅文本"
