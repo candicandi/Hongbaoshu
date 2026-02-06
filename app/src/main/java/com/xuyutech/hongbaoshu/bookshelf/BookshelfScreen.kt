@@ -57,6 +57,8 @@ fun BookshelfScreen(
     books: List<BookshelfBook>,
     onOpenBook: (BookshelfBook) -> Unit,
     onImport: () -> Unit,
+    onDeletePack: (BookshelfBook) -> Unit = {},
+    onRevalidatePack: (BookshelfBook) -> Unit = {},
     isLoading: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -148,7 +150,8 @@ fun BookshelfScreen(
             },
             onRevalidate = {
                 showActions = false
-                scope.launch { snackbarHostState.showSnackbar("重新校验开发中") }
+                scope.launch { snackbarHostState.showSnackbar("重新校验中") }
+                onRevalidatePack(actionTarget!!)
             },
             onDelete = {
                 showActions = false
@@ -173,7 +176,13 @@ fun BookshelfScreen(
                 TextButton(
                     onClick = {
                         showDeleteConfirm = false
-                        scope.launch { snackbarHostState.showSnackbar("删除开发中") }
+                        val target = actionTarget!!
+                        if (target.packId == "builtin") {
+                            scope.launch { snackbarHostState.showSnackbar("内置书籍不可删除") }
+                        } else {
+                            onDeletePack(target)
+                            scope.launch { snackbarHostState.showSnackbar("已从书架移除") }
+                        }
                     }
                 ) { Text("删除") }
             },

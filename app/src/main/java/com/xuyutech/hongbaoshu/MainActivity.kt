@@ -13,6 +13,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -29,6 +30,7 @@ import com.xuyutech.hongbaoshu.reader.ReaderScreen
 import com.xuyutech.hongbaoshu.ui.theme.HongbaoshuTheme
 import com.xuyutech.hongbaoshu.storage.ProgressStore
 import com.xuyutech.hongbaoshu.pack.model.PackIndex
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -70,6 +72,7 @@ private fun HongbaoshuApp() {
         factory = BookshelfViewModelFactory(packIndexStore)
     )
     val packs = bookshelfViewModel.packs.collectAsState()
+    val scope = rememberCoroutineScope()
     
     // 监听加载状态
     val readerState = viewModel.state.observeAsState()
@@ -121,7 +124,35 @@ private fun HongbaoshuApp() {
                     }
                 )
             },
-            onOpenBook = { screen.value = Screen.Reader },
+            onOpenBook = { selected ->
+                scope.launch { packIndexStore.markOpened(selected.packId) }
+                screen.value = Screen.Reader
+            },
+            onDeletePack = { target ->
+                scope.launch { packIndexStore.delete(target.packId) }
+            },
+            onRevalidatePack = { target ->
+                if (target.packId == "builtin" && book != null) {
+                    scope.launch {
+                        packIndexStore.upsert(
+                            PackIndex(
+                                packId = "builtin",
+                                packVersion = 1,
+                                formatVersion = 1,
+                                bookTitle = book.title,
+                                bookAuthor = book.author,
+                                bookEdition = book.edition,
+                                importedAt = System.currentTimeMillis(),
+                                hasCover = true,
+                                hasFlipSound = true,
+                                hasNarration = true,
+                                missingNarrationSentenceCount = missingCount,
+                                isValid = true
+                            )
+                        )
+                    }
+                }
+            },
             onBackToBookshelf = {
                 viewModel.pauseNarration()
                 screen.value = Screen.Bookshelf
@@ -140,6 +171,8 @@ private fun ReaderNavHost(
     isLoading: Boolean,
     books: List<BookshelfBook>,
     onOpenBook: (BookshelfBook) -> Unit,
+    onDeletePack: (BookshelfBook) -> Unit,
+    onRevalidatePack: (BookshelfBook) -> Unit,
     onBackToBookshelf: () -> Unit,
     viewModel: ReaderViewModel,
     audioManager: AudioManager
@@ -149,6 +182,8 @@ private fun ReaderNavHost(
             books = books,
             onOpenBook = onOpenBook,
             onImport = {},
+            onDeletePack = onDeletePack,
+            onRevalidatePack = onRevalidatePack,
             isLoading = isLoading,
             modifier = Modifier.fillMaxSize()
         )
