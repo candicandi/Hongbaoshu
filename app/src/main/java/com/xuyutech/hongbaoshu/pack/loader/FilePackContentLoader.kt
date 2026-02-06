@@ -7,6 +7,7 @@ import com.xuyutech.hongbaoshu.data.BookJson
 import com.xuyutech.hongbaoshu.data.BookLoadResult
 import com.xuyutech.hongbaoshu.data.ContentLoader
 import com.xuyutech.hongbaoshu.data.ParagraphType
+import com.xuyutech.hongbaoshu.pack.model.PackManifest
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -17,6 +18,7 @@ class FilePackContentLoader(
     private val json = Json { ignoreUnknownKeys = true }
 
     private var cachedResult: BookLoadResult? = null
+    private var manifest: PackManifest? = null
     private val narrationMap: MutableMap<String, Uri> = mutableMapOf()
     private var flipUri: Uri? = null
     private var coverUri: Uri? = null
@@ -24,7 +26,9 @@ class FilePackContentLoader(
     override suspend fun loadBook(context: Context): BookLoadResult {
         cachedResult?.let { return it }
 
-        val bookFile = File(packDir, "text/book.json")
+        val mf = loadManifest()
+        val bookPath = mf?.resources?.text?.path ?: "text/book.json"
+        val bookFile = File(packDir, bookPath)
         val text = bookFile.readText(Charsets.UTF_8)
         val bookJson = json.decodeFromString(BookJson.serializer(), text)
         val book = Book.fromJson(bookJson)
@@ -46,10 +50,15 @@ class FilePackContentLoader(
     private fun buildResourceMaps() {
         narrationMap.clear()
 
-        coverUri = File(packDir, "images/cover.png").takeIf { it.exists() }?.let { Uri.fromFile(it) }
-        flipUri = File(packDir, "sound/page_flip.wav.ogg").takeIf { it.exists() }?.let { Uri.fromFile(it) }
+        val mf = loadManifest()
+        val coverPath = mf?.resources?.cover?.path ?: "images/cover.png"
+        val flipPath = mf?.resources?.flipSound?.path ?: "sound/page_flip.wav.ogg"
 
-        val narrationDir = File(packDir, "audio/narration")
+        coverUri = File(packDir, coverPath).takeIf { it.exists() }?.let { Uri.fromFile(it) }
+        flipUri = File(packDir, flipPath).takeIf { it.exists() }?.let { Uri.fromFile(it) }
+
+        val narrationDirPath = mf?.resources?.narration?.dir ?: "audio/narration"
+        val narrationDir = File(packDir, narrationDirPath)
         val narrationFiles = narrationDir.listFiles()?.filter { it.isFile }?.sortedBy { it.name }.orEmpty()
         narrationFiles.forEach { file ->
             val filename = file.name
@@ -58,6 +67,17 @@ class FilePackContentLoader(
                 narrationMap[prefix] = Uri.fromFile(file)
             }
         }
+    }
+
+    private fun loadManifest(): PackManifest? {
+        manifest?.let { return it }
+        val manifestFile = File(packDir, "manifest.json")
+        if (!manifestFile.exists()) return null
+        val mf = runCatching {
+            json.decodeFromString(PackManifest.serializer(), manifestFile.readText(Charsets.UTF_8))
+        }.getOrNull()
+        manifest = mf
+        return mf
     }
 
     private fun collectMissingSentenceAudio(book: Book): Set<String> {
@@ -94,4 +114,3 @@ class FilePackContentLoader(
         }
     }
 }
-
