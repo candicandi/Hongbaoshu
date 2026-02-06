@@ -5,9 +5,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.xuyutech.hongbaoshu.ui.components.PrimaryOutlinedButton
@@ -252,25 +253,29 @@ private fun BookshelfCard(
                 .padding(Dimens.m)
         ) {
             val coverShape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-            AsyncImage(
-                model = book.coverUri,
-                contentDescription = "封面",
+            BookCover(
+                coverUri = book.coverUri,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp)
-                    .clip(coverShape),
-                contentScale = ContentScale.Crop
+                    .aspectRatio(2f / 3f)
+                    .clip(coverShape)
             )
             Text(
                 text = book.title,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                minLines = 2,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = Dimens.m)
             )
             Text(
                 text = book.author,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                minLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = Dimens.xs)
             )
             StatusChip(
@@ -278,6 +283,35 @@ private fun BookshelfCard(
                 modifier = Modifier.padding(top = Dimens.s)
             )
         }
+    }
+}
+
+@Composable
+private fun BookCover(
+    coverUri: String?,
+    modifier: Modifier = Modifier
+) {
+    if (!coverUri.isNullOrBlank()) {
+        AsyncImage(
+            model = coverUri,
+            contentDescription = "封面",
+            modifier = modifier,
+            contentScale = ContentScale.Crop
+        )
+        return
+    }
+
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        // Paper-like placeholder: no heavy contrast, no icon spam.
+        androidx.compose.foundation.Canvas(modifier = Modifier.matchParentSize()) { drawRect(color = MaterialTheme.colorScheme.surfaceVariant) }
+        Text(
+            text = "无封面",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
