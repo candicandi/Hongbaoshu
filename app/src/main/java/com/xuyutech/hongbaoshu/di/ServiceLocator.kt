@@ -3,8 +3,10 @@ package com.xuyutech.hongbaoshu.di
 import android.content.Context
 import com.xuyutech.hongbaoshu.audio.AudioManager
 import com.xuyutech.hongbaoshu.audio.AudioManagerImpl
+import com.xuyutech.hongbaoshu.data.ActivePackContentLoader
 import com.xuyutech.hongbaoshu.data.ContentLoader
 import com.xuyutech.hongbaoshu.data.ContentLoaderImpl
+import com.xuyutech.hongbaoshu.pack.loader.FilePackContentLoader
 import com.xuyutech.hongbaoshu.pack.index.PackIndexStore
 import com.xuyutech.hongbaoshu.pack.importer.ZipPackImporter
 import com.xuyutech.hongbaoshu.pack.storage.PackFileStore
@@ -17,7 +19,7 @@ import com.xuyutech.hongbaoshu.storage.ProgressStore
  */
 object ServiceLocator {
     @Volatile
-    private var loader: ContentLoader? = null
+    private var activePackLoader: ActivePackContentLoader? = null
 
     @Volatile
     private var audio: AudioManager? = null
@@ -42,14 +44,21 @@ object ServiceLocator {
     @Volatile
     private var packImporter: ZipPackImporter? = null
 
-    fun provideContentLoader(): ContentLoader =
-        loader ?: synchronized(this) {
-            loader ?: ContentLoaderImpl().also { loader = it }
+    fun provideActivePackContentLoader(context: Context): ActivePackContentLoader =
+        activePackLoader ?: synchronized(this) {
+            activePackLoader ?: ActivePackContentLoader(
+                builtinLoader = ContentLoaderImpl(),
+                packLoaderProvider = { packId ->
+                    FilePackContentLoader(providePackFileStore(context).packDir(packId))
+                }
+            ).also { activePackLoader = it }
         }
+
+    fun provideContentLoader(context: Context): ContentLoader = provideActivePackContentLoader(context)
 
     fun provideAudioManager(context: Context): AudioManager =
         audio ?: synchronized(this) {
-            audio ?: AudioManagerImpl(context.applicationContext, provideContentLoader()).also {
+            audio ?: AudioManagerImpl(context.applicationContext, provideContentLoader(context)).also {
                 audio = it
             }
         }
@@ -86,7 +95,7 @@ object ServiceLocator {
     fun clear() {
         audio?.release()
         audio = null
-        loader = null
+        activePackLoader = null
         progressStore = null
         pageCacheStore = null
         packIndexStore = null

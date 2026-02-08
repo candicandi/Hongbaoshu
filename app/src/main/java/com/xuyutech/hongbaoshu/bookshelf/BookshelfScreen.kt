@@ -31,22 +31,28 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
+import coil.request.ImageRequest
 import com.xuyutech.hongbaoshu.ui.components.PrimaryOutlinedButton
 import com.xuyutech.hongbaoshu.ui.components.SoftCard
 import com.xuyutech.hongbaoshu.ui.components.StatusChip
 import com.xuyutech.hongbaoshu.ui.theme.Dimens
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class BookshelfBook(
     val packId: String,
@@ -291,17 +297,52 @@ private fun BookCover(
     coverUri: String?,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val resolved = coverUri?.takeIf { it.isNotBlank() }
-    val painter = if (resolved == null) null else rememberAsyncImagePainter(resolved)
-    val showImage = painter != null && painter.state is AsyncImagePainter.State.Success
+    val model = remember(resolved) {
+        resolved?.let {
+            when {
+                it.startsWith("file:///android_asset/") -> it
+                it.startsWith("file:/") -> runCatching { java.io.File(java.net.URI(it)) }.getOrNull() ?: it
+                it.startsWith("/") -> java.io.File(it).takeIf { file -> file.exists() } ?: it
+                else -> it
+            }
+        }
+    }
+    val assetBitmapState = produceState<androidx.compose.ui.graphics.ImageBitmap?>(initialValue = null, key1 = resolved) {
+        value = null
+        if (resolved != null && resolved.startsWith("file:///android_asset/")) {
+            val path = resolved.removePrefix("file:///android_asset/")
+            value = runCatching {
+                withContext(Dispatchers.IO) {
+                    context.assets.open(path).use { stream ->
+                        android.graphics.BitmapFactory.decodeStream(stream)?.asImageBitmap()
+                    }
+                }
+            }.getOrNull()
+        }
+    }
+    val assetBitmap = assetBitmapState.value
+    val request = remember(model) {
+        model?.let { ImageRequest.Builder(context).data(it).build() }
+    }
+    val painter = if (request == null) null else rememberAsyncImagePainter(request)
+    val showPainterImage = assetBitmap == null && painter != null && painter.state is AsyncImagePainter.State.Success
 
     Box(
         modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center
     ) {
-        if (showImage && painter != null) {
+        if (assetBitmap != null) {
             Image(
-                painter = painter,
+                bitmap = assetBitmap,
+                contentDescription = "封面",
+                modifier = Modifier.matchParentSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else if (showPainterImage) {
+            Image(
+                painter = painter!!,
                 contentDescription = "封面",
                 modifier = Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop

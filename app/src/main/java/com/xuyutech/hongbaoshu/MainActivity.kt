@@ -24,7 +24,6 @@ import com.xuyutech.hongbaoshu.bookshelf.BookshelfScreen
 import com.xuyutech.hongbaoshu.bookshelf.BookshelfViewModel
 import com.xuyutech.hongbaoshu.bookshelf.BookshelfViewModelFactory
 import com.xuyutech.hongbaoshu.audio.AudioManager
-import com.xuyutech.hongbaoshu.data.ContentLoader
 import com.xuyutech.hongbaoshu.di.ServiceLocator
 import com.xuyutech.hongbaoshu.reader.ReaderViewModel
 import com.xuyutech.hongbaoshu.reader.ReaderViewModelFactory
@@ -32,7 +31,7 @@ import com.xuyutech.hongbaoshu.reader.ReaderScreen
 import com.xuyutech.hongbaoshu.ui.theme.HongbaoshuTheme
 import com.xuyutech.hongbaoshu.storage.ProgressStore
 import com.xuyutech.hongbaoshu.pack.model.PackIndex
-import com.xuyutech.hongbaoshu.pack.loader.FilePackContentLoader
+import com.xuyutech.hongbaoshu.pack.storage.PackInspector
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -58,13 +57,9 @@ private fun HongbaoshuApp() {
     val packImporter = remember { ServiceLocator.providePackImporter(context) }
 
     val activePackId = remember { mutableStateOf("builtin") }
-    val loaderForPack: ContentLoader = remember(activePackId.value) {
-        if (activePackId.value == "builtin") {
-            ServiceLocator.provideContentLoader()
-        } else {
-            FilePackContentLoader(packFileStore.packDir(activePackId.value))
-        }
-    }
+    val activePackLoader = remember { ServiceLocator.provideActivePackContentLoader(context) }
+    activePackLoader.setActivePackId(activePackId.value)
+    val loaderForPack = activePackLoader
     
     val viewModel: ReaderViewModel = viewModel(
         key = "reader_${activePackId.value}",
@@ -106,6 +101,12 @@ private fun HongbaoshuApp() {
     
     val book = readerState.value?.book
     val missingCount = readerState.value?.missingAudio?.size ?: 0
+    val activePackIndex = packs.value.firstOrNull { it.packId == activePackId.value }
+    val narrationControlsEnabled = if (activePackId.value == "builtin") {
+        true
+    } else {
+        activePackIndex?.hasNarration == true && activePackIndex.isValid
+    }
     // Ensure builtin exists in bookshelf index.
     LaunchedEffect(book, activePackId.value) {
         if (activePackId.value == "builtin" && book != null) {
@@ -136,22 +137,9 @@ private fun HongbaoshuApp() {
             screen = screen.value,
             isLoading = isLoading,
             books = packs.value.map { p ->
-                val coverUri = run {
-                    val root = packFileStore.packDir(p.packId)
-                    val candidates = listOf(
-                        "images/cover.png",
-                        "images/cover.jpg",
-                        "images/cover.jpeg",
-                        "cover.png",
-                        "cover.jpg",
-                        "cover.jpeg"
-                    )
-                    val file = candidates
-                        .asSequence()
-                        .map { rel -> File(root, rel) }
-                        .firstOrNull { it.exists() }
-                    file?.toURI()?.toString()
-                }
+                val coverUri = PackInspector.resolveCoverPath(packFileStore.packDir(p.packId))
+                    ?.toURI()
+                    ?.toString()
                 BookshelfBook(
                     packId = p.packId,
                     title = p.bookTitle,
@@ -221,7 +209,7 @@ private fun HongbaoshuApp() {
                 importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
             },
             viewModel = viewModel,
-            narrationControlsEnabled = activePackId.value == "builtin",
+            narrationControlsEnabled = narrationControlsEnabled,
             audioManager = audioManager
         )
     }
