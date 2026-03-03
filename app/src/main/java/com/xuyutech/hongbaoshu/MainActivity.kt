@@ -23,6 +23,8 @@ import com.xuyutech.hongbaoshu.bookshelf.BookshelfBook
 import com.xuyutech.hongbaoshu.bookshelf.BookshelfScreen
 import com.xuyutech.hongbaoshu.bookshelf.BookshelfViewModel
 import com.xuyutech.hongbaoshu.bookshelf.BookshelfViewModelFactory
+import com.xuyutech.hongbaoshu.bookshelf.ImportProgressDialog
+import com.xuyutech.hongbaoshu.bookshelf.ImportState
 import com.xuyutech.hongbaoshu.audio.AudioManager
 import com.xuyutech.hongbaoshu.di.ServiceLocator
 import com.xuyutech.hongbaoshu.reader.ReaderViewModel
@@ -84,14 +86,27 @@ private fun HongbaoshuApp() {
     val packs = bookshelfViewModel.packs.collectAsState()
     val scope = rememberCoroutineScope()
     val bookshelfMessage = remember { mutableStateOf<String?>(null) }
+    var importState by remember { mutableStateOf<ImportState>(ImportState.Idle) }
+
+    val performImport: (android.net.Uri) -> Unit = { targetUri ->
+        importState = ImportState.Importing
+        scope.launch {
+            val result = packImporter.import(targetUri)
+            if (result.status == com.xuyutech.hongbaoshu.pack.importer.PackImportResult.Status.SUCCESS || 
+                result.status == com.xuyutech.hongbaoshu.pack.importer.PackImportResult.Status.SKIPPED) {
+                importState = ImportState.Idle
+                bookshelfMessage.value = result.message
+            } else {
+                importState = ImportState.Error(result.message ?: "导入报错", targetUri)
+            }
+        }
+    }
 
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val result = packImporter.import(uri)
-            bookshelfMessage.value = result.message
+        if (uri != null) {
+            performImport(uri)
         }
     }
     
@@ -102,31 +117,24 @@ private fun HongbaoshuApp() {
     val book = readerState.value?.book
     val missingCount = readerState.value?.missingAudio?.size ?: 0
     val activePackIndex = packs.value.firstOrNull { it.packId == activePackId.value }
-    val narrationControlsEnabled = if (activePackId.value == "builtin") {
-        true
-    } else {
-        activePackIndex?.hasNarration == true && activePackIndex.isValid
+    // 统一所有包的朗读控制逻辑,基于实际的音频资源可用性
+    val narrationControlsEnabled = activePackIndex?.hasNarration == true && activePackIndex.isValid
+    val builtinMigrator = remember { ServiceLocator.provideBuiltinMigrator(context) }
+    var builtinMigrated by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        builtinMigrator.invoke()
+        builtinMigrated = true
     }
-    // Ensure builtin exists in bookshelf index.
-    LaunchedEffect(book, activePackId.value) {
-        if (activePackId.value == "builtin" && book != null) {
-            packIndexStore.upsert(
-                PackIndex(
-                    packId = "builtin",
-                    packVersion = 1,
-                    formatVersion = 1,
-                    bookTitle = book.title,
-                    bookAuthor = book.author,
-                    bookEdition = book.edition,
-                    importedAt = System.currentTimeMillis(),
-                    hasCover = true,
-                    hasFlipSound = true,
-                    hasNarration = true,
-                    missingNarrationSentenceCount = missingCount,
-                    isValid = true
-                )
-            )
+
+    if (!builtinMigrated) {
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = androidx.compose.ui.Alignment.Center
+        ) {
+            androidx.compose.material3.Text("正在初始化资源...")
         }
+        return
     }
 
     Surface(
@@ -145,7 +153,7 @@ private fun HongbaoshuApp() {
                     title = p.bookTitle,
                     author = p.bookAuthor,
                     edition = p.bookEdition,
-                    coverUri = if (p.packId == "builtin") "file:///android_asset/images/cover.png" else coverUri,
+                    coverUri = coverUri,
                     statusText = when {
                         !p.isValid -> "不可用"
                         !p.hasNarration -> "仅文本"
@@ -167,26 +175,6 @@ private fun HongbaoshuApp() {
             },
             onRevalidatePack = { target ->
                 scope.launch {
-                    if (target.packId == "builtin" && book != null) {
-                        packIndexStore.upsert(
-                            PackIndex(
-                                packId = "builtin",
-                                packVersion = 1,
-                                formatVersion = 1,
-                                bookTitle = book.title,
-                                bookAuthor = book.author,
-                                bookEdition = book.edition,
-                                importedAt = System.currentTimeMillis(),
-                                hasCover = true,
-                                hasFlipSound = true,
-                                hasNarration = true,
-                                missingNarrationSentenceCount = missingCount,
-                                isValid = true
-                            )
-                        )
-                        return@launch
-                    }
-
                     val existing = packIndexStore.find(target.packId) ?: return@launch
                     val inspection = packFileStore.inspect(target.packId)
                     packIndexStore.upsert(
@@ -211,6 +199,12 @@ private fun HongbaoshuApp() {
             viewModel = viewModel,
             narrationControlsEnabled = narrationControlsEnabled,
             audioManager = audioManager
+        )
+
+        ImportProgressDialog(
+            state = importState,
+            onRetry = { performImport(it) },
+            onCancel = { importState = ImportState.Idle }
         )
     }
 }

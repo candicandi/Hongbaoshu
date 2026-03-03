@@ -92,6 +92,18 @@ object ServiceLocator {
             ).also { packImporter = it }
         }
 
+    @Volatile
+    private var builtinMigrator: com.xuyutech.hongbaoshu.pack.importer.BuiltinMigrator? = null
+
+    fun provideBuiltinMigrator(context: Context): com.xuyutech.hongbaoshu.pack.importer.BuiltinMigrator =
+        builtinMigrator ?: synchronized(this) {
+            builtinMigrator ?: com.xuyutech.hongbaoshu.pack.importer.BuiltinMigrator(
+                context = context.applicationContext,
+                packIndexStore = providePackIndexStore(context),
+                packFileStore = providePackFileStore(context)
+            ).also { builtinMigrator = it }
+        }
+
     fun clear() {
         audio?.release()
         audio = null

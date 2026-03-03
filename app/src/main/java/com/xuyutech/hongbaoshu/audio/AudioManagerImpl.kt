@@ -311,15 +311,24 @@ class AudioManagerImpl(
     override fun playNarrationList(sentenceIds: List<String>, startIndex: Int): Boolean {
         if (sentenceIds.isEmpty()) return false
         val idx = startIndex.coerceIn(0, sentenceIds.lastIndex)
-        val startId = sentenceIds[idx]
         
-        // 验证首个音频是否存在
-        if (contentLoader.narrationUri(startId) == null) return false
+        // 向后寻找第一个有音频的句子
+        var validIdx = -1
+        for (i in idx until sentenceIds.size) {
+            if (contentLoader.narrationUri(sentenceIds[i]) != null) {
+                validIdx = i
+                break
+            }
+        }
+
+        if (validIdx < 0) return false
+
+        val startId = sentenceIds[validIdx]
 
         ensureNarrationPlayerReady()
         autoAdvancePending = false
         lastNarrationSentenceIds = sentenceIds
-        lastNarrationStartIndex = idx
+        lastNarrationStartIndex = validIdx
         lastRetrySentenceId = startId
         lastRetryCount = 0
 

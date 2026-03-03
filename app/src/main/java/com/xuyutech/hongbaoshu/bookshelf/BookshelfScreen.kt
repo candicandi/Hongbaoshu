@@ -327,7 +327,7 @@ private fun BookCover(
         model?.let { ImageRequest.Builder(context).data(it).build() }
     }
     val painter = if (request == null) null else rememberAsyncImagePainter(request)
-    val showPainterImage = assetBitmap == null && painter != null && painter.state is AsyncImagePainter.State.Success
+    val showPainterImage = assetBitmap == null && painter != null && painter.state !is AsyncImagePainter.State.Error
 
     Box(
         modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),

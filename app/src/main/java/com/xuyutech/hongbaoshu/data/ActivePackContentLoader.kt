@@ -16,11 +16,7 @@ class ActivePackContentLoader(
     fun currentPackId(): String = activePackId
 
     private fun currentLoader(): ContentLoader {
-        return if (activePackId == "builtin") {
-            builtinLoader
-        } else {
-            packLoaderProvider(activePackId)
-        }
+        return packLoaderProvider(activePackId)
     }
 
     override suspend fun loadBook(context: Context): BookLoadResult = currentLoader().loadBook(context)

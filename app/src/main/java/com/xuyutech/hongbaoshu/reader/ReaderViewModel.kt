@@ -606,7 +606,14 @@ class ReaderViewModel(
         if (success) {
             persistState(narrationSentenceId = sentenceId)
         } else {
-            showToast("该句子音频缺失")
+            showToast("音频缺失，已跳过")
+            // 如果处于连续朗读状态，自动触发翻页跳过本页剩余部分
+            if (narrationEnabled && !isManualPageTurn) {
+                val lastId = request.sentenceIds.lastOrNull() ?: sentenceId
+                viewModelScope.launch {
+                    handlePageCompleted(lastId)
+                }
+            }
         }
     }
 

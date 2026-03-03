@@ -176,9 +176,9 @@ fun ReaderScreen(
     }
 
     val showNarrationUnsupported = {
-        // Unified message for now; later can be pack-capability specific.
+        // 提示用户该书籍不包含朗读音频
         uiScope.launch {
-            snackbarHostState.showSnackbar("导入书籍的朗读功能暂未接入")
+            snackbarHostState.showSnackbar("该书籍不包含朗读音频")
         }
     }
 
