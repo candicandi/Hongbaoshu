@@ -1,5 +1,8 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.xuyutech.hongbaoshu.reader
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PlayArrow
@@ -50,16 +53,23 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.livedata.observeAsState
@@ -93,6 +103,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CancellationException
@@ -114,16 +125,28 @@ data class ToolBarState(
 fun ReaderScreen(
     viewModel: ReaderViewModel,
     audioManager: AudioManager,
+    narrationControlsEnabled: Boolean = true,
     onBack: () -> Unit
 ) {
     val state = viewModel.state.observeAsState(ReaderState())
     val audioState = audioManager.state.collectAsState()
+
+    // Intercept system back (including edge-swipe) so it navigates back to bookshelf
+    // instead of finishing the Activity.
+    BackHandler(enabled = true) {
+        if (state.value.narrationEnabled) {
+            viewModel.pauseNarration()
+        }
+        onBack()
+    }
+
     val showToc = remember { mutableStateOf(false) }
     val showNarrationPanel = remember { mutableStateOf(false) }
     val showFontSettings = remember { mutableStateOf(false) }
     val toolbarState = remember { mutableStateOf(ToolBarState()) }
     var suppressNextCenterTap by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val uiScope = rememberCoroutineScope()
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
     
@@ -149,6 +172,13 @@ fun ReaderScreen(
         state.value.toastMessage?.let { message ->
             snackbarHostState.showSnackbar(message)
             viewModel.clearToast()
+        }
+    }
+
+    val showNarrationUnsupported = {
+        // 提示用户该书籍不包含朗读音频
+        uiScope.launch {
+            snackbarHostState.showSnackbar("该书籍不包含朗读音频")
         }
     }
 
@@ -287,11 +317,6 @@ fun ReaderScreen(
             buildPageConfig(fontSizeLevel)
         }
         
-        // 更新屏幕尺寸（用于缓存 key）
-        LaunchedEffect(contentWidthPx, contentHeightPx) {
-            viewModel.updateScreenSize(contentWidthPx, contentHeightPx)
-        }
-        
         val book = state.value.book
         val currentChapterIndex = state.value.currentChapterIndex
         val currentChapter = book?.chapters?.getOrNull(currentChapterIndex)
@@ -306,6 +331,8 @@ fun ReaderScreen(
                 contentWidthPx > 0 &&
                 contentHeightPx > 0
             ) {
+                // 同步更新尺寸，避免“先分页后清缓存”导致的卡加载竞态
+                viewModel.updateScreenSize(contentWidthPx, contentHeightPx)
                 pagesReady = false
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     viewModel.computeCurrentChapter(textMeasurer, ::buildPageConfig, fontSizeLevel)
@@ -316,6 +343,8 @@ fun ReaderScreen(
 
         LaunchedEffect(book, fontSizeLevel, contentWidthPx, contentHeightPx) {
             if (book != null && contentWidthPx > 0 && contentHeightPx > 0) {
+                // 与当前章节计算保持同一时序
+                viewModel.updateScreenSize(contentWidthPx, contentHeightPx)
                 globalPagesReady = false
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     viewModel.computeRemainingChapters(textMeasurer, ::buildPageConfig, fontSizeLevel)
@@ -396,7 +425,12 @@ fun ReaderScreen(
                 audioState.value.narrationSentenceId == null &&
                 currentPageSentences.isNotEmpty()) {
                 narrationInitialized = true
-                viewModel.playSentence(currentPageSentences.first())
+                val firstPlayable = currentPageSentences.firstOrNull { it !in state.value.missingAudio }
+                if (firstPlayable != null) {
+                    viewModel.playSentence(firstPlayable)
+                } else {
+                    viewModel.playSentence(currentPageSentences.first())
+                }
             }
         }
         
@@ -408,7 +442,12 @@ fun ReaderScreen(
             if (state.value.needPlayFirstSentence && currentPageSentences.isNotEmpty()) {
                 viewModel.clearPlayFirstSentence()
                 viewModel.resetNarrationState()
-                viewModel.playSentence(currentPageSentences.first())
+                val firstPlayable = currentPageSentences.firstOrNull { it !in state.value.missingAudio }
+                if (firstPlayable != null) {
+                    viewModel.playSentence(firstPlayable)
+                } else {
+                    viewModel.playSentence(currentPageSentences.first())
+                }
             }
         }
 
@@ -575,6 +614,11 @@ fun ReaderScreen(
                     },
                     onPlayPause = {
                         updateToolbarInteraction()
+                        if (!narrationControlsEnabled) {
+                            viewModel.toggleNarration(false)
+                            showNarrationUnsupported()
+                            return@ReaderBottomBar
+                        }
                         if (!state.value.narrationEnabled) {
                             viewModel.toggleNarration(true)
                         }
@@ -588,6 +632,10 @@ fun ReaderScreen(
                     playPauseLabel = playPauseLabel,
                     onOpenNarrationPanel = {
                         updateToolbarInteraction()
+                        if (!narrationControlsEnabled) {
+                            showNarrationUnsupported()
+                            return@ReaderBottomBar
+                        }
                         openNarrationPanel()
                     },
                     onOpenFontSettings = {
@@ -602,90 +650,89 @@ fun ReaderScreen(
                 )
             }
 
-            if (showNarrationPanel.value || showFontSettings.value) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) {
-                            detectTapGestures { hideToolbar() }
-                        }
-                )
-            }
-            AnimatedVisibility(
-                visible = showNarrationPanel.value,
-                enter = slideInVertically { it },
-                exit = slideOutVertically { it },
-                modifier = Modifier.align(Alignment.BottomCenter)
-            ) {
-                NarrationPanel(
-                    audioState = audioState.value,
-                    narrationEnabled = state.value.narrationEnabled,
-                    narrationTimerMinutes = state.value.narrationTimerMinutes,
-                    narrationStopAtChapterEnd = state.value.narrationStopAtChapterEnd,
-                    onPlayPause = {
-                        updateToolbarInteraction()
-                        if (!state.value.narrationEnabled) {
-                            viewModel.toggleNarration(true)
-                        }
-                        if (audioState.value.narrationSentenceId == null) {
+            if (showNarrationPanel.value) {
+                val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                ModalBottomSheet(
+                    onDismissRequest = { hideToolbar() },
+                    sheetState = sheetState,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    shape = MaterialTheme.shapes.large
+                ) {
+                    NarrationPanelContent(
+                        audioState = audioState.value,
+                        narrationEnabled = state.value.narrationEnabled,
+                        narrationTimerMinutes = state.value.narrationTimerMinutes,
+                        narrationStopAtChapterEnd = state.value.narrationStopAtChapterEnd,
+                        onPlayPause = {
+                            updateToolbarInteraction()
+                            if (!state.value.narrationEnabled) {
+                                viewModel.toggleNarration(true)
+                            }
+                            if (audioState.value.narrationSentenceId == null) {
+                                viewModel.playNextSentenceManual()
+                            } else {
+                                viewModel.pauseOrResumeSentence()
+                            }
+                        },
+                        onPrev = {
+                            updateToolbarInteraction()
+                            viewModel.playPreviousSentenceManual()
+                        },
+                        onNext = {
+                            updateToolbarInteraction()
                             viewModel.playNextSentenceManual()
-                        } else {
-                            viewModel.pauseOrResumeSentence()
-                        }
-                    },
-                    onPrev = {
-                        updateToolbarInteraction()
-                        viewModel.playPreviousSentenceManual()
-                    },
-                    onNext = {
-                        updateToolbarInteraction()
-                        viewModel.playNextSentenceManual()
-                    },
-                    onSpeedPreview = {
-                        updateToolbarInteraction()
-                        viewModel.previewNarrationSpeed(it)
-                    },
-                    onSpeedCommit = {
-                        updateToolbarInteraction()
-                        viewModel.setNarrationSpeed(it)
-                    },
-                    onTimerStart = {
-                        updateToolbarInteraction()
-                        viewModel.setNarrationStopAtChapterEnd(false)
-                        viewModel.startNarrationTimer(it)
-                    },
-                    onStopAtChapterEnd = {
-                        updateToolbarInteraction()
-                        viewModel.clearNarrationTimer()
-                        viewModel.setNarrationStopAtChapterEnd(true)
-                    },
-                    onTimerClear = {
-                        updateToolbarInteraction()
-                        viewModel.clearNarrationTimer()
-                        viewModel.setNarrationStopAtChapterEnd(false)
-                    },
-                    onRetry = {
-                        updateToolbarInteraction()
-                        viewModel.retryLastSentence()
-                    },
-                    onDismiss = { hideToolbar() }
-                )
+                        },
+                        onSpeedPreview = {
+                            updateToolbarInteraction()
+                            viewModel.previewNarrationSpeed(it)
+                        },
+                        onSpeedCommit = {
+                            updateToolbarInteraction()
+                            viewModel.setNarrationSpeed(it)
+                        },
+                        onTimerStart = {
+                            updateToolbarInteraction()
+                            viewModel.setNarrationStopAtChapterEnd(false)
+                            viewModel.startNarrationTimer(it)
+                        },
+                        onStopAtChapterEnd = {
+                            updateToolbarInteraction()
+                            viewModel.clearNarrationTimer()
+                            viewModel.setNarrationStopAtChapterEnd(true)
+                        },
+                        onTimerClear = {
+                            updateToolbarInteraction()
+                            viewModel.clearNarrationTimer()
+                            viewModel.setNarrationStopAtChapterEnd(false)
+                        },
+                        onRetry = {
+                            updateToolbarInteraction()
+                            viewModel.retryLastSentence()
+                        },
+                        onDismiss = { hideToolbar() }
+                    )
+                }
             }
-            
-            AnimatedVisibility(
-                visible = showFontSettings.value,
-                enter = slideInVertically { it },
-                exit = slideOutVertically { it },
-                modifier = Modifier.align(Alignment.BottomCenter)
-            ) {
-                FontSettingsPanel(
-                    currentFontSize = state.value.fontSizeLevel,
-                    onFontSizeChange = {
-                        updateToolbarInteraction()
-                        viewModel.setFontSize(it)
-                    },
-                    onDismiss = { hideToolbar() }
-                )
+
+            if (showFontSettings.value) {
+                val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                ModalBottomSheet(
+                    onDismissRequest = { hideToolbar() },
+                    sheetState = sheetState,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    shape = MaterialTheme.shapes.large
+                ) {
+                    FontSettingsPanelContent(
+                        currentFontSize = state.value.fontSizeLevel,
+                        onFontSizeChange = {
+                            updateToolbarInteraction()
+                            viewModel.setFontSize(it)
+                        },
+                        onDismiss = { hideToolbar() }
+                    )
+                }
             }
 
 
@@ -774,31 +821,9 @@ private fun ReaderTopBar(
     chapterTitle: String,
     onBack: () -> Unit
 ) {
-    androidx.compose.material3.Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        shadowElevation = 0.dp,
-        tonalElevation = 2.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars)
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            androidx.compose.material3.IconButton(onClick = onBack) {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "返回"
-                )
-            }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 8.dp)
-            ) {
+    TopAppBar(
+        title = {
+            Column {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
@@ -814,8 +839,22 @@ private fun ReaderTopBar(
                     )
                 }
             }
-        }
-    }
+        },
+        navigationIcon = {
+            androidx.compose.material3.IconButton(onClick = onBack) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回"
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            navigationIconContentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        windowInsets = WindowInsets.statusBars
+    )
 }
 
 @Composable
@@ -829,51 +868,65 @@ private fun ReaderBottomBar(
     isNightMode: Boolean,
     onToggleNightMode: () -> Unit
 ) {
-    androidx.compose.material3.Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainer,
+    NavigationBar(
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
         contentColor = MaterialTheme.colorScheme.onSurface,
-        shadowElevation = 8.dp,
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+        tonalElevation = 6.dp
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 12.dp)
-                .padding(bottom = 8.dp), // Extra padding for navigation bar if needed, or just visual balance
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            BottomBarAction(
-                icon = androidx.compose.material.icons.Icons.Default.Menu,
-                label = "目录",
-                onClick = onOpenToc
-            )
-            BottomBarAction(
-                icon = playPauseIcon,
-                label = playPauseLabel,
-                onClick = onPlayPause
-            )
-            BottomBarAction(
-                icon = androidx.compose.material.icons.Icons.Default.Info,
-                label = "朗读",
-                onClick = onOpenNarrationPanel
-            )
-            BottomBarAction(
-                icon = androidx.compose.material.icons.Icons.Default.Settings,
-                label = "字体",
-                onClick = onOpenFontSettings
-            )
-            BottomBarAction(
-                icon = if (isNightMode) {
-                    androidx.compose.material.icons.Icons.Filled.LightMode
-                } else {
-                    androidx.compose.material.icons.Icons.Filled.DarkMode
-                },
-                label = if (isNightMode) "日间" else "夜间",
-                onClick = onToggleNightMode
-            )
-        }
+        NavigationBarItem(
+            selected = false,
+            onClick = onOpenToc,
+            icon = {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.Menu,
+                    contentDescription = "目录"
+                )
+            },
+            label = { Text("目录", style = MaterialTheme.typography.labelSmall) }
+        )
+        NavigationBarItem(
+            selected = false,
+            onClick = onPlayPause,
+            icon = { androidx.compose.material3.Icon(imageVector = playPauseIcon, contentDescription = playPauseLabel) },
+            label = { Text(playPauseLabel, style = MaterialTheme.typography.labelSmall) }
+        )
+        NavigationBarItem(
+            selected = false,
+            onClick = onOpenNarrationPanel,
+            icon = {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.Info,
+                    contentDescription = "朗读"
+                )
+            },
+            label = { Text("朗读", style = MaterialTheme.typography.labelSmall) }
+        )
+        NavigationBarItem(
+            selected = false,
+            onClick = onOpenFontSettings,
+            icon = {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.Settings,
+                    contentDescription = "字体"
+                )
+            },
+            label = { Text("字体", style = MaterialTheme.typography.labelSmall) }
+        )
+        NavigationBarItem(
+            selected = false,
+            onClick = onToggleNightMode,
+            icon = {
+                androidx.compose.material3.Icon(
+                    imageVector = if (isNightMode) {
+                        androidx.compose.material.icons.Icons.Filled.LightMode
+                    } else {
+                        androidx.compose.material.icons.Icons.Filled.DarkMode
+                    },
+                    contentDescription = if (isNightMode) "日间" else "夜间"
+                )
+            },
+            label = { Text(if (isNightMode) "日间" else "夜间", style = MaterialTheme.typography.labelSmall) }
+        )
     }
 }
 
@@ -908,68 +961,62 @@ private fun FontSettingsPanel(
     onFontSizeChange: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
-    androidx.compose.material3.Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shadowElevation = 16.dp,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    // Content-only: ModalBottomSheet provides the outer container, shape, and background.
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp)
+            .padding(bottom = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // Drag Handle
-            Box(
-                modifier = Modifier
-                    .width(32.dp)
-                    .height(4.dp)
-                    .background(
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                        androidx.compose.foundation.shape.CircleShape
-                    )
-            )
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            // Title
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                 Text(
-                    text = "字体大小",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                 androidx.compose.material3.IconButton(onClick = onDismiss) {
-                     androidx.compose.material3.Icon(
-                         imageVector = androidx.compose.material.icons.Icons.Default.Close,
-                         contentDescription = "关闭"
-                     )
-                }
-            }
-           
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            // Slider
             Text(
-                text = "$currentFontSize",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                text = "字体大小",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
             )
-            
-            Slider(
-                value = currentFontSize.toFloat(),
-                onValueChange = { onFontSizeChange(it.roundToInt()) },
-                valueRange = com.xuyutech.hongbaoshu.reader.FONT_SIZE_MIN.toFloat()..com.xuyutech.hongbaoshu.reader.FONT_SIZE_MAX.toFloat(),
-                steps = (com.xuyutech.hongbaoshu.reader.FONT_SIZE_MAX - com.xuyutech.hongbaoshu.reader.FONT_SIZE_MIN) / 2 - 1
-            )
-            
-            Spacer(modifier = Modifier.height(24.dp))
+            androidx.compose.material3.IconButton(onClick = onDismiss) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.Close,
+                    contentDescription = "关闭"
+                )
+            }
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = "$currentFontSize",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Slider(
+            value = currentFontSize.toFloat(),
+            onValueChange = { onFontSizeChange(it.roundToInt()) },
+            valueRange = com.xuyutech.hongbaoshu.reader.FONT_SIZE_MIN.toFloat()..com.xuyutech.hongbaoshu.reader.FONT_SIZE_MAX.toFloat(),
+            steps = (com.xuyutech.hongbaoshu.reader.FONT_SIZE_MAX - com.xuyutech.hongbaoshu.reader.FONT_SIZE_MIN) / 2 - 1
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
     }
+}
+
+@Composable
+private fun FontSettingsPanelContent(
+    currentFontSize: Int,
+    onFontSizeChange: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    FontSettingsPanel(
+        currentFontSize = currentFontSize,
+        onFontSizeChange = onFontSizeChange,
+        onDismiss = onDismiss
+    )
 }
 
 @Composable
@@ -989,229 +1036,239 @@ private fun NarrationPanel(
     onRetry: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    androidx.compose.material3.Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shadowElevation = 16.dp,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    // Content-only: ModalBottomSheet provides the outer container, shape, and background.
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp)
+            .padding(bottom = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
         ) {
-            // Drag Handle
-            Box(
-                modifier = Modifier
-                    .width(32.dp)
-                    .height(4.dp)
-                    .background(
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                        androidx.compose.foundation.shape.CircleShape
-                    )
-            )
-            Spacer(modifier = Modifier.height(24.dp))
+            Column {
+                Text(
+                    text = "朗读",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                val status = when {
+                    !narrationEnabled -> "未开启"
+                    audioState.narrationPlaying -> "正在播放"
+                    audioState.narrationSentenceId != null -> "已暂停"
+                    else -> "准备就绪"
+                }
+                Text(
+                    text = status,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
-            // Title & Status
+            androidx.compose.material3.IconButton(onClick = onDismiss) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.Close,
+                    contentDescription = "关闭"
+                )
+            }
+        }
+
+        if (audioState.narrationError != null) {
+            Text(
+                text = audioState.narrationError,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+            TextButton(onClick = onRetry) {
+                Text("重试")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            androidx.compose.material3.FilledTonalIconButton(
+                onClick = onPrev,
+                modifier = Modifier.size(48.dp),
+                colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                )
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.SkipPrevious,
+                    contentDescription = "上一句"
+                )
+            }
+
+            androidx.compose.material3.FilledIconButton(
+                onClick = onPlayPause,
+                modifier = Modifier.size(72.dp)
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = if (audioState.narrationPlaying) {
+                        androidx.compose.material.icons.Icons.Default.Pause
+                    } else {
+                        androidx.compose.material.icons.Icons.Default.PlayArrow
+                    },
+                    contentDescription = "播放暂停",
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+
+            androidx.compose.material3.FilledTonalIconButton(
+                onClick = onNext,
+                modifier = Modifier.size(48.dp),
+                colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                )
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.SkipNext,
+                    contentDescription = "下一句"
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Column(modifier = Modifier.fillMaxWidth()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
-            ) {
-                Column {
-                    Text(
-                        text = "朗读",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    val status = when {
-                        !narrationEnabled -> "未开启"
-                        audioState.narrationPlaying -> "正在播放"
-                        audioState.narrationSentenceId != null -> "已暂停"
-                        else -> "准备就绪"
-                    }
-                    Text(
-                        text = status,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                
-                androidx.compose.material3.IconButton(onClick = onDismiss) {
-                     androidx.compose.material3.Icon(
-                         imageVector = androidx.compose.material.icons.Icons.Default.Close,
-                         contentDescription = "关闭"
-                     )
-                }
-            }
-            
-            if (audioState.narrationError != null) {
-                Text(
-                    text = audioState.narrationError,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-                TextButton(onClick = onRetry) {
-                    Text("重试")
-                }
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // Playback Controls
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Prev
-                androidx.compose.material3.FilledTonalIconButton(
-                    onClick = onPrev,
-                    modifier = Modifier.size(48.dp),
-                    colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
-                    )
-                ) {
-                    androidx.compose.material3.Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Default.SkipPrevious,
-                        contentDescription = "上一句"
-                    )
-                }
-
-                // Play/Pause (Big)
-                androidx.compose.material3.FilledIconButton(
-                    onClick = onPlayPause,
-                    modifier = Modifier.size(72.dp)
-                ) {
-                    androidx.compose.material3.Icon(
-                        imageVector = if (audioState.narrationPlaying) {
-                            androidx.compose.material.icons.Icons.Default.Pause
-                        } else {
-                            androidx.compose.material.icons.Icons.Default.PlayArrow
-                        },
-                        contentDescription = "播放暂停",
-                        modifier = Modifier.size(32.dp)
-                    )
-                }
-
-                // Next
-                androidx.compose.material3.FilledTonalIconButton(
-                    onClick = onNext,
-                    modifier = Modifier.size(48.dp),
-                    colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
-                    )
-                ) {
-                    androidx.compose.material3.Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Default.SkipNext,
-                        contentDescription = "下一句"
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // Speed Control
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "语速",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Text(
-                        text = String.format(java.util.Locale.US, "%.2fx", audioState.narrationSpeed),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                val minSpeed = 0.75f
-                val maxSpeed = 1.25f
-                val step = 0.05f
-                val steps = (((maxSpeed - minSpeed) / step).toInt() - 1).coerceAtLeast(0)
-                var sliderValue by remember { mutableStateOf(audioState.narrationSpeed) }
-                LaunchedEffect(audioState.narrationSpeed) {
-                    sliderValue = audioState.narrationSpeed
-                }
-                
-                Slider(
-                    value = sliderValue.coerceIn(minSpeed, maxSpeed),
-                    onValueChange = { raw ->
-                        val stepsFromMin = ((raw.coerceIn(minSpeed, maxSpeed) - minSpeed) / step).roundToInt()
-                        val snapped = (minSpeed + stepsFromMin * step).coerceIn(minSpeed, maxSpeed)
-                        sliderValue = snapped
-                        onSpeedPreview(snapped)
-                    },
-                    onValueChangeFinished = {
-                        onSpeedCommit(sliderValue.coerceIn(minSpeed, maxSpeed))
-                    },
-                    valueRange = minSpeed..maxSpeed,
-                    steps = steps
+                Text(
+                    text = "语速",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    text = String.format(java.util.Locale.US, "%.2fx", audioState.narrationSpeed),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
-            
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Timer Control
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "定时关闭",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    if (narrationTimerMinutes != null || narrationStopAtChapterEnd) {
-                        TextButton(
-                            onClick = onTimerClear,
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-                            modifier = Modifier.height(24.dp)
-                        ) {
-                            Text("关闭定时")
-                        }
+            val minSpeed = 0.75f
+            val maxSpeed = 1.25f
+            val step = 0.05f
+            val steps = (((maxSpeed - minSpeed) / step).toInt() - 1).coerceAtLeast(0)
+            var sliderValue by remember { mutableStateOf(audioState.narrationSpeed) }
+            LaunchedEffect(audioState.narrationSpeed) {
+                sliderValue = audioState.narrationSpeed
+            }
+
+            Slider(
+                value = sliderValue.coerceIn(minSpeed, maxSpeed),
+                onValueChange = { raw ->
+                    val stepsFromMin = ((raw.coerceIn(minSpeed, maxSpeed) - minSpeed) / step).roundToInt()
+                    val snapped = (minSpeed + stepsFromMin * step).coerceIn(minSpeed, maxSpeed)
+                    sliderValue = snapped
+                    onSpeedPreview(snapped)
+                },
+                onValueChangeFinished = {
+                    onSpeedCommit(sliderValue.coerceIn(minSpeed, maxSpeed))
+                },
+                valueRange = minSpeed..maxSpeed,
+                steps = steps
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "定时关闭",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                if (narrationTimerMinutes != null || narrationStopAtChapterEnd) {
+                    TextButton(
+                        onClick = onTimerClear,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                        modifier = Modifier.height(24.dp)
+                    ) {
+                        Text("关闭定时")
                     }
                 }
-                Spacer(modifier = Modifier.height(12.dp))
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val timerOptions = listOf(15, 30, 60)
-                    timerOptions.forEach { minutes ->
-                        val selected = narrationTimerMinutes == minutes && !narrationStopAtChapterEnd
-                        TimerChip(
-                            label = "${minutes}分钟",
-                            selected = selected,
-                            onClick = { onTimerStart(minutes) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    
-                    val endChapterSelected = narrationStopAtChapterEnd
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val timerOptions = listOf(15, 30, 60)
+                timerOptions.forEach { minutes ->
+                    val selected = narrationTimerMinutes == minutes && !narrationStopAtChapterEnd
                     TimerChip(
-                        label = "读完本章",
-                        selected = endChapterSelected,
-                        onClick = onStopAtChapterEnd,
+                        label = "${minutes}分钟",
+                        selected = selected,
+                        onClick = { onTimerStart(minutes) },
                         modifier = Modifier.weight(1f)
                     )
                 }
+
+                val endChapterSelected = narrationStopAtChapterEnd
+                TimerChip(
+                    label = "读完本章",
+                    selected = endChapterSelected,
+                    onClick = onStopAtChapterEnd,
+                    modifier = Modifier.weight(1f)
+                )
             }
-            
-            // Safe area spacing
-            Spacer(modifier = Modifier.height(16.dp))
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
     }
+}
+
+@Composable
+private fun NarrationPanelContent(
+    audioState: com.xuyutech.hongbaoshu.audio.AudioState,
+    narrationEnabled: Boolean,
+    narrationTimerMinutes: Int?,
+    narrationStopAtChapterEnd: Boolean,
+    onPlayPause: () -> Unit,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    onSpeedPreview: (Float) -> Unit,
+    onSpeedCommit: (Float) -> Unit,
+    onTimerStart: (Int) -> Unit,
+    onStopAtChapterEnd: () -> Unit,
+    onTimerClear: () -> Unit,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    NarrationPanel(
+        audioState = audioState,
+        narrationEnabled = narrationEnabled,
+        narrationTimerMinutes = narrationTimerMinutes,
+        narrationStopAtChapterEnd = narrationStopAtChapterEnd,
+        onPlayPause = onPlayPause,
+        onPrev = onPrev,
+        onNext = onNext,
+        onSpeedPreview = onSpeedPreview,
+        onSpeedCommit = onSpeedCommit,
+        onTimerStart = onTimerStart,
+        onStopAtChapterEnd = onStopAtChapterEnd,
+        onTimerClear = onTimerClear,
+        onRetry = onRetry,
+        onDismiss = onDismiss
+    )
 }
 
 @Composable

@@ -1,6 +1,7 @@
 package com.xuyutech.hongbaoshu.audio
 
 import androidx.media3.common.Player
+import com.xuyutech.hongbaoshu.data.ContentLoader
 import kotlinx.coroutines.flow.StateFlow
 
 data class AudioState(
@@ -46,6 +47,9 @@ interface AudioManager {
     fun seekTo(positionMs: Long)
 
     fun activePlayer(): Player?
+
+    /** 更新内容加载器（切换 pack 时调用） */
+    fun updateContentLoader(loader: ContentLoader)
 
     fun release()
 }

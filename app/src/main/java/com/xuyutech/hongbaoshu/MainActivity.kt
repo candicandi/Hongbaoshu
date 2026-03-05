@@ -1,76 +1,290 @@
 package com.xuyutech.hongbaoshu
 
+import android.content.Intent
+import android.content.res.Configuration
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import coil.compose.rememberAsyncImagePainter
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.xuyutech.hongbaoshu.bookshelf.BookshelfBook
+import com.xuyutech.hongbaoshu.bookshelf.BookshelfScreen
+import com.xuyutech.hongbaoshu.bookshelf.BookshelfViewModel
+import com.xuyutech.hongbaoshu.bookshelf.BookshelfViewModelFactory
+import com.xuyutech.hongbaoshu.bookshelf.ImportProgressDialog
+import com.xuyutech.hongbaoshu.bookshelf.ImportState
 import com.xuyutech.hongbaoshu.audio.AudioManager
-import com.xuyutech.hongbaoshu.data.ContentLoader
 import com.xuyutech.hongbaoshu.di.ServiceLocator
 import com.xuyutech.hongbaoshu.reader.ReaderViewModel
 import com.xuyutech.hongbaoshu.reader.ReaderViewModelFactory
 import com.xuyutech.hongbaoshu.reader.ReaderScreen
 import com.xuyutech.hongbaoshu.ui.theme.HongbaoshuTheme
 import com.xuyutech.hongbaoshu.storage.ProgressStore
+import com.xuyutech.hongbaoshu.pack.model.PackIndex
+import com.xuyutech.hongbaoshu.pack.storage.PackInspector
+import kotlinx.coroutines.launch
+import java.io.File
 
 class MainActivity : ComponentActivity() {
+    private var pendingExternalImportUri by mutableStateOf<Uri?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingExternalImportUri = extractImportUri(intent)
         setContent {
             HongbaoshuTheme {
-                HongbaoshuApp()
+                HongbaoshuApp(
+                    externalImportUri = pendingExternalImportUri,
+                    onExternalImportConsumed = { pendingExternalImportUri = null }
+                )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingExternalImportUri = extractImportUri(intent)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val orientation = when (newConfig.orientation) {
+            Configuration.ORIENTATION_LANDSCAPE -> "landscape"
+            Configuration.ORIENTATION_PORTRAIT -> "portrait"
+            else -> "undefined"
+        }
+        android.util.Log.i("MainActivity", "onConfigurationChanged orientation=$orientation")
+    }
+
+    private fun extractImportUri(intent: Intent?): Uri? {
+        if (intent == null) return null
+        return when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> intent.getParcelableExtra(Intent.EXTRA_STREAM)
+            Intent.ACTION_SEND_MULTIPLE -> {
+                intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.firstOrNull()
+            }
+            else -> null
         }
     }
 }
 
 @Composable
-private fun HongbaoshuApp() {
+private fun HongbaoshuApp(
+    externalImportUri: Uri?,
+    onExternalImportConsumed: () -> Unit
+) {
     val context = LocalContext.current
-    val loader: ContentLoader = remember { ServiceLocator.provideContentLoader() }
-    val audioManager: AudioManager = remember { ServiceLocator.provideAudioManager(context) }
-    val progressStore: ProgressStore = remember { ServiceLocator.provideProgressStore(context) }
-    val pageCacheStore = remember { ServiceLocator.providePageCacheStore(context) }
-    
-    // 启动时立即创建 ViewModel 并开始加载文档
+    var initError by remember { mutableStateOf<String?>(null) }
+    var audioManager: AudioManager? = null
+    var progressStore: ProgressStore? = null
+    var pageCacheStore: com.xuyutech.hongbaoshu.storage.PageCacheStore? = null
+    var packIndexStore: com.xuyutech.hongbaoshu.pack.index.PackIndexStore? = null
+    var packFileStore: com.xuyutech.hongbaoshu.pack.storage.PackFileStore? = null
+    var packImporter: com.xuyutech.hongbaoshu.pack.importer.ZipPackImporter? = null
+    var activePackLoader: com.xuyutech.hongbaoshu.data.ActivePackContentLoader? = null
+
+    try {
+        audioManager = ServiceLocator.provideAudioManager(context)
+    } catch (e: Exception) {
+        android.util.Log.e("MainActivity", "Failed to create AudioManager", e)
+        initError = "音频管理器初始化失败: ${e.message}"
+    }
+
+    if (initError == null) {
+        try {
+            progressStore = ServiceLocator.provideProgressStore(context)
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Failed to create ProgressStore", e)
+            initError = "进度存储初始化失败: ${e.message}"
+        }
+    }
+
+    if (initError == null) {
+        try {
+            pageCacheStore = ServiceLocator.providePageCacheStore(context)
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Failed to create PageCacheStore", e)
+            initError = "页面缓存初始化失败: ${e.message}"
+        }
+    }
+
+    if (initError == null) {
+        try {
+            packIndexStore = ServiceLocator.providePackIndexStore(context)
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Failed to create PackIndexStore", e)
+            initError = "包索引存储初始化失败: ${e.message}"
+        }
+    }
+
+    if (initError == null) {
+        try {
+            packFileStore = ServiceLocator.providePackFileStore(context)
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Failed to create PackFileStore", e)
+            initError = "包文件存储初始化失败: ${e.message}"
+        }
+    }
+
+    if (initError == null) {
+        try {
+            packImporter = ServiceLocator.providePackImporter(context)
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Failed to create PackImporter", e)
+            initError = "包导入器初始化失败: ${e.message}"
+        }
+    }
+
+    if (initError == null) {
+        try {
+            activePackLoader = ServiceLocator.provideActivePackContentLoader(context)
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Failed to create ActivePackContentLoader", e)
+            initError = "内容加载器初始化失败: ${e.message}"
+        }
+    }
+
+    if (initError != null || audioManager == null || progressStore == null || 
+        pageCacheStore == null || packIndexStore == null || packFileStore == null || 
+        packImporter == null || activePackLoader == null) {
+        if (initError == null) {
+            initError = "部分组件初始化失败，请重启应用"
+        }
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = androidx.compose.ui.Alignment.Center
+        ) {
+            androidx.compose.material3.Text("初始化失败: $initError", color = Color.Red)
+        }
+        return
+    }
+
+    val am = audioManager!!
+    val ps = progressStore!!
+    val pcs = pageCacheStore!!
+    val pis = packIndexStore!!
+    val pfs = packFileStore!!
+    val pim = packImporter!!
+    val apl = activePackLoader!!
+
+    val activePackId = remember { mutableStateOf("builtin") }
+    DisposableEffect(Unit) {
+        onDispose { am.release() }
+    }
+    val screen = remember { mutableStateOf(Screen.Bookshelf) }
+
+    val builtinMigrator = remember { ServiceLocator.provideBuiltinMigrator(context) }
+    var builtinMigrated by remember { mutableStateOf(false) }
+    var bookshelfViewModel by remember { mutableStateOf<BookshelfViewModel?>(null) }
+
+    LaunchedEffect(Unit) {
+        try {
+            builtinMigrator.invoke(forceMigrate = true)
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "BuiltinMigrator failed", e)
+        }
+        // 迁移完成后创建 bookshelfViewModel
+        bookshelfViewModel = BookshelfViewModel(pis)
+        builtinMigrated = true
+    }
+
+    if (!builtinMigrated) {
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = androidx.compose.ui.Alignment.Center
+        ) {
+            androidx.compose.material3.Text("正在初始化资源...")
+        }
+        return
+    }
+
+    LaunchedEffect(activePackId.value) {
+        apl.setActivePackId(activePackId.value)
+        am.updateContentLoader(apl)
+    }
+
     val viewModel: ReaderViewModel = viewModel(
+        key = "reader_${activePackId.value}_${builtinMigrated}",
         factory = ReaderViewModelFactory(
             context.applicationContext as android.app.Application,
-            loader,
-            progressStore,
-            audioManager,
-            pageCacheStore
+            activePackId.value,
+            apl,
+            ps,
+            am,
+            pcs
         )
     )
-    
-    DisposableEffect(Unit) {
-        onDispose { audioManager.release() }
+
+
+    val bvm = bookshelfViewModel ?: return
+    val packs = bvm.packs.collectAsState()
+    val scope = rememberCoroutineScope()
+    val bookshelfMessage = remember { mutableStateOf<String?>(null) }
+    var importState   by remember { mutableStateOf<ImportState>(ImportState.Idle) }
+
+    val performImport: (android.net.Uri) -> Unit = { targetUri ->
+        importState = ImportState.Importing
+        scope.launch {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    targetUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            val result = pim.import(targetUri)
+            if (result.status == com.xuyutech.hongbaoshu.pack.importer.PackImportResult.Status.SUCCESS || 
+                result.status == com.xuyutech.hongbaoshu.pack.importer.PackImportResult.Status.SKIPPED) {
+                importState = ImportState.Idle
+                bookshelfMessage.value = result.message
+            } else {
+                importState = ImportState.Error(result.message ?: "导入报错", targetUri)
+            }
+        }
     }
-    val screen = remember { mutableStateOf(Screen.Cover) }
+
+    LaunchedEffect(externalImportUri) {
+        val uri = externalImportUri ?: return@LaunchedEffect
+        performImport(uri)
+        onExternalImportConsumed()
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            performImport(uri)
+        }
+    }
     
     // 监听加载状态
     val readerState = viewModel.state.observeAsState()
     val isLoading = readerState.value?.isLoading ?: true
     
-    // 预加载封面图，避免页面切换时闪烁
-    val coverPainter = rememberAsyncImagePainter("file:///android_asset/images/cover.png")
+    val book = readerState.value?.book
+    val missingCount = readerState.value?.missingAudio?.size ?: 0
+    val activePackIndex = packs.value.firstOrNull { it.packId == activePackId.value }
+    // 统一所有包的朗读控制逻辑,基于实际的音频资源可用性
+    val narrationControlsEnabled = activePackIndex?.hasNarration == true && activePackIndex.isValid
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -79,67 +293,110 @@ private fun HongbaoshuApp() {
         ReaderNavHost(
             screen = screen.value,
             isLoading = isLoading,
-            coverPainter = coverPainter,
-            onEnterReader = { screen.value = Screen.Reader },
-            onBackToCover = { screen.value = Screen.Cover },
+            books = packs.value.map { p ->
+                val coverUri = PackInspector.resolveCoverPath(pfs.packDir(p.packId))
+                    ?.toURI()
+                    ?.toString()
+                BookshelfBook(
+                    packId = p.packId,
+                    title = p.bookTitle,
+                    author = p.bookAuthor,
+                    edition = p.bookEdition,
+                    coverUri = coverUri,
+                    statusText = when {
+                        !p.isValid -> "不可用"
+                        !p.hasNarration -> "仅文本"
+                        p.missingNarrationSentenceCount > 0 -> "音频缺失(${p.missingNarrationSentenceCount})"
+                        else -> "文本+音频"
+                    }
+                )
+            },
+            onOpenBook = { selected ->
+                scope.launch { pis.markOpened(selected.packId) }
+                activePackId.value = selected.packId
+                screen.value = Screen.Reader
+            },
+            onDeletePack = { target ->
+                scope.launch {
+                    pis.delete(target.packId)
+                    pfs.deletePack(target.packId)
+                }
+            },
+            onRevalidatePack = { target ->
+                scope.launch {
+                    val existing = pis.find(target.packId) ?: return@launch
+                    val inspection = pfs.inspect(target.packId)
+                    val missingNarrationSentenceCount =
+                        PackInspector.inspectMissingNarrationSentenceCount(pfs.packDir(target.packId))
+                            ?: existing.missingNarrationSentenceCount
+                    pis.upsert(
+                        existing.copy(
+                            hasCover = inspection.hasCover,
+                            hasFlipSound = inspection.hasFlipSound,
+                            hasNarration = inspection.hasNarration,
+                            missingNarrationSentenceCount = missingNarrationSentenceCount,
+                            isValid = inspection.isValid
+                        )
+                    )
+                }
+            },
+            onBackToBookshelf = {
+                viewModel.pauseNarration()
+                screen.value = Screen.Bookshelf
+            },
+            message = bookshelfMessage.value,
+            onMessageShown = { bookshelfMessage.value = null },
+            onImport = {
+                importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+            },
             viewModel = viewModel,
-            audioManager = audioManager
+            narrationControlsEnabled = narrationControlsEnabled,
+            audioManager = am
+        )
+
+        ImportProgressDialog(
+            state = importState,
+            onRetry = { performImport(it) },
+            onCancel = { importState = ImportState.Idle }
         )
     }
 }
 
-@Composable
-private fun CoverScreen(
-    isLoading: Boolean,
-    coverPainter: androidx.compose.ui.graphics.painter.Painter,
-    onEnter: () -> Unit
-) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        Image(
-            painter = coverPainter,
-            contentDescription = "封面",
-            modifier = Modifier
-                .fillMaxSize()
-                .clickable { onEnter() },
-            contentScale = ContentScale.Crop,
-            alignment = androidx.compose.ui.Alignment.Center
-        )
-        
-        // 加载中显示转圈动画
-        if (isLoading) {
-            androidx.compose.material3.CircularProgressIndicator(
-                modifier = Modifier
-                    .align(androidx.compose.ui.Alignment.BottomCenter)
-                    .padding(bottom = 80.dp),
-                color = androidx.compose.ui.graphics.Color(0xFFFFD700),
-                strokeWidth = 3.dp
-            )
-        }
-    }
-}
-
-private enum class Screen { Cover, Reader }
+private enum class Screen { Bookshelf, Reader }
 
 @Composable
 private fun ReaderNavHost(
     screen: Screen,
     isLoading: Boolean,
-    coverPainter: androidx.compose.ui.graphics.painter.Painter,
-    onEnterReader: () -> Unit,
-    onBackToCover: () -> Unit,
+    books: List<BookshelfBook>,
+    onOpenBook: (BookshelfBook) -> Unit,
+    onDeletePack: (BookshelfBook) -> Unit,
+    onRevalidatePack: (BookshelfBook) -> Unit,
+    onBackToBookshelf: () -> Unit,
+    message: String?,
+    onMessageShown: () -> Unit,
+    onImport: () -> Unit,
     viewModel: ReaderViewModel,
+    narrationControlsEnabled: Boolean,
     audioManager: AudioManager
 ) {
     when (screen) {
-        Screen.Cover -> CoverScreen(
+        Screen.Bookshelf -> BookshelfScreen(
+            books = books,
+            onOpenBook = onOpenBook,
+            onImport = onImport,
+            onDeletePack = onDeletePack,
+            onRevalidatePack = onRevalidatePack,
+            message = message,
+            onMessageShown = onMessageShown,
             isLoading = isLoading,
-            coverPainter = coverPainter,
-            onEnter = onEnterReader
+            modifier = Modifier.fillMaxSize()
         )
         Screen.Reader -> ReaderScreen(
             viewModel = viewModel,
             audioManager = audioManager,
-            onBack = onBackToCover
+            narrationControlsEnabled = narrationControlsEnabled,
+            onBack = onBackToBookshelf
         )
     }
 }

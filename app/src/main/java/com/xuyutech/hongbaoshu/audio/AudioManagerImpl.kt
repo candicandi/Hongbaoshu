@@ -202,7 +202,7 @@ class AudioManagerImpl(
 
     private fun buildNarrationMediaItems(sentenceIds: List<String>): List<MediaItem> {
         return sentenceIds.mapNotNull { id ->
-            contentLoader.narrationUri(id)?.let { uri ->
+            getContentLoader().narrationUri(id)?.let { uri ->
                 MediaItem.Builder()
                     .setUri(uri)
                     .setMediaId(id)
@@ -293,7 +293,7 @@ class AudioManagerImpl(
 
     private fun ensureResourcesLoaded() {
         if (flipSoundId == 0) {
-            contentLoader.flipSound()?.let { uri ->
+            getContentLoader().flipSound()?.let { uri ->
                 val rawPath = uri.path ?: return@let
                 // file:///android_asset/path → strip prefix for AssetManager
                 val assetPath = rawPath.removePrefix("/android_asset/")
@@ -311,15 +311,24 @@ class AudioManagerImpl(
     override fun playNarrationList(sentenceIds: List<String>, startIndex: Int): Boolean {
         if (sentenceIds.isEmpty()) return false
         val idx = startIndex.coerceIn(0, sentenceIds.lastIndex)
-        val startId = sentenceIds[idx]
         
-        // 验证首个音频是否存在
-        if (contentLoader.narrationUri(startId) == null) return false
+        // 向后寻找第一个有音频的句子
+        var validIdx = -1
+        for (i in idx until sentenceIds.size) {
+            if (getContentLoader().narrationUri(sentenceIds[i]) != null) {
+                validIdx = i
+                break
+            }
+        }
+
+        if (validIdx < 0) return false
+
+        val startId = sentenceIds[validIdx]
 
         ensureNarrationPlayerReady()
         autoAdvancePending = false
         lastNarrationSentenceIds = sentenceIds
-        lastNarrationStartIndex = idx
+        lastNarrationStartIndex = validIdx
         lastRetrySentenceId = startId
         lastRetryCount = 0
 
@@ -328,7 +337,11 @@ class AudioManagerImpl(
             
             if (mediaItems.isEmpty()) return false
 
-            narrationPlayer.setMediaItems(mediaItems, idx, 0L)
+            // buildNarrationMediaItems() may filter out missing audios, so we must map by mediaId.
+            val startMediaIndex = mediaItems.indexOfFirst { it.mediaId == startId }
+            if (startMediaIndex < 0) return false
+
+            narrationPlayer.setMediaItems(mediaItems, startMediaIndex, 0L)
             narrationPlayer.prepare()
             narrationPlayer.playWhenReady = true
             
@@ -409,6 +422,16 @@ class AudioManagerImpl(
             }
         }
     }
+
+    @Volatile
+    private var contentLoaderRef: ContentLoader = contentLoader
+
+    override fun updateContentLoader(loader: ContentLoader) {
+        contentLoaderRef = loader
+        android.util.Log.d("AudioManagerImpl", "ContentLoader updated to: ${loader.javaClass.simpleName}")
+    }
+
+    private fun getContentLoader(): ContentLoader = contentLoaderRef
 
     override fun release() {
         narrationPlayer.release()

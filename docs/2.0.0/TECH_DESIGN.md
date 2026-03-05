@@ -1,6 +1,56 @@
-# 红宝书 App 技术方案 v1.0
+# 红宝书 App 技术方案 v1.0 / v2.0
 
 > 目标：基于 PRD 的纯离线阅读体验，首发 Android 8.0+，Kotlin + Jetpack Compose，单 Activity 架构。所有文本/音频/图片随包内置，无网络/登录/统计。
+
+---
+
+## 0. v2.0 关键变化（红宝匣）
+
+2.0 目标：阅读器与内容解耦，App 仅提供阅读器能力；文本/音频等通过“资源包（Pack）”导入并在书架管理。
+
+### 0.0 当前实现状态（2026-02-06）
+
+- 书架（Bookshelf）
+- `BookshelfScreen` 已作为默认入口，展示内置书与导入书列表，支持长按删除/校验/详情。
+- 书架卡片：状态徽章强制单行，避免换行导致卡片高度不一致。
+- 导入（Import）
+- 通过系统文件选择器（SAF）导入 Zip Pack：解压到临时目录校验后原子落盘到 `files/packs/<packId>/`。
+- `manifest.json` 必须存在且可解析；`formatVersion=1`；`text/book.json` 可解析且 ID 唯一性校验通过。
+- 封面解析：优先使用 `manifest.resources.cover.path`，同时会尝试探测常见封面路径（`images/cover.png|jpg|jpeg`、`cover.png|jpg|jpeg`）。
+- 封面显示：封面缺失或加载失败时使用“无封面”占位，避免空白。
+- 阅读（Reader）
+- 导入包的文本阅读已接入：非 `builtin` 时使用 `FilePackContentLoader` 从 pack 目录加载 `book.json`。
+- 进度与分页磁盘缓存已按 `packId` 隔离。
+- 朗读仅对 `builtin` 启用：导入书目前提示“朗读暂未接入”（后续需要 pack-aware 的音频资源解析）。
+- 测试资源包
+- `tests/fixtures/packs/hello_text_only_v1.hbs.zip`：基础文本包，带封面（`images/cover.png`）。
+- `tests/fixtures/packs/hello_text_no_cover_v1.hbs.zip`：无封面，验证占位。
+- `tests/fixtures/packs/hello_text_cover_root_v1.hbs.zip`：封面在根目录（`cover.png`），验证封面探测与 manifest 声明。
+
+### 0.1 目标与非目标
+
+- 目标：书架、多书管理、资源包导入与校验、按 packId 隔离进度与缓存。
+- 非目标：在线商店/下载、DRM/加密、多书合并为一书。
+
+### 0.2 架构分层（新增）
+
+- **Reader 层**：分页、渲染、朗读、进度控制，不直接读 assets。
+- **Pack 层**：导入、校验、索引、资源寻址，负责提供 `Book` 与资源 URI。
+- **Storage 层**：按 `packId` 存进度与缓存。
+
+### 0.3 核心新模块
+
+- `PackRepository`：管理 pack 索引、当前 pack、资源路径。
+- `PackImporter`：导入 zip，校验 manifest 与 book.json，原子化落盘。
+- `PackIndexStore`：书架列表与资源状态缓存（持久化）。
+- `PackContentLoader`：替代 `ContentLoader`，从 pack 目录解析 `book.json` 与资源 URI。
+
+### 0.4 资源目录与导入（概要）
+
+- 资源包格式见 `docs/PRD_2.0_BOOKSHELF_AND_PACKS.md`。
+- 导入流程：解压到临时目录 → 校验 → 生成索引 → 原子移动到 `files/packs/<packId>/`。
+
+---
 
 ## 1. 技术栈与整体架构
 - **框架**：Kotlin、Jetpack Compose、单 Activity（`MainActivity`），NavHost 控制 Cover → Reader → TOC。`SplashActivity` 仅做冷启封面与跳转逻辑。
@@ -117,3 +167,210 @@
 - PageCurl 开源实现兼容性：优先内置源码并裁剪；如出现性能问题，降级为简化左右滑翻页动画。
 - 资源体积：若朗读音频过大，按章节拆分压缩并评估码率；必要时首次启动解压压缩包到内部存储。
 - 不同设备字体/排版差异：分页依赖屏幕与字体度量，需在常见分辨率上回归测试。
+
+---
+
+# 红宝匣 App 技术方案 v2.0（新增细化）
+
+## 1. 包与书架的核心数据模型
+
+### 1.1 PackIndex（书架索引）
+
+- `packId`, `packVersion`, `formatVersion`
+- `bookTitle`, `bookAuthor`, `bookEdition`
+- `importedAt`, `lastOpenedAt`
+- `capabilities`：`hasText`, `hasCover`, `hasFlipSound`, `hasNarration`
+- `missingNarrationSentenceCount`
+- `isValid`
+
+### 1.2 PackRuntime（运行时）
+
+- `activePackId`
+- `activeBook: Book`
+- `baseDir: File`
+- `resourceResolver`：封面/翻页/朗读等资源寻址
+
+### 1.3 Manifest 与索引模型（建议 Kotlin 数据类）
+
+```
+data class PackManifest(
+  val formatVersion: Int,
+  val packId: String,
+  val packVersion: Int,
+  val book: BookMetadata,
+  val resources: PackResources
+)
+
+data class PackResources(
+  val text: ResourceItem,
+  val cover: ResourceItem? = null,
+  val flipSound: ResourceItem? = null,
+  val narration: NarrationResource? = null
+)
+
+data class ResourceItem(
+  val path: String,
+  val sha256: String? = null
+)
+
+data class NarrationResource(
+  val dir: String,
+  val codec: String
+)
+
+data class PackIndex(
+  val packId: String,
+  val packVersion: Int,
+  val formatVersion: Int,
+  val bookTitle: String,
+  val bookAuthor: String,
+  val bookEdition: String,
+  val importedAt: Long,
+  val lastOpenedAt: Long? = null,
+  val hasCover: Boolean,
+  val hasFlipSound: Boolean,
+  val hasNarration: Boolean,
+  val missingNarrationSentenceCount: Int = 0,
+  val isValid: Boolean = true
+)
+```
+
+## 2. 存储布局
+
+```
+files/
+  packs/
+    <packId>/
+      manifest.json
+      text/book.json
+      images/cover.png
+      sound/page_flip.wav.ogg
+      audio/narration/*.mp3
+cache/
+  page_cache/
+    <packId>/
+      <fontSize>_<width>_<height>.json
+```
+
+### 2.1 索引持久化建议
+
+- 方案 A：DataStore 保存 `List<PackIndex>` 的 JSON 串
+- 方案 B：Room 表 `pack_index`（更易查询与排序）
+
+建议：2.0 先用 DataStore，保持实现简单。Pack 数量通常较少，性能可接受。
+
+## 3. Reader 与 Pack 解耦接口
+
+### 3.1 PackContentLoader（替换现有 ContentLoader）
+
+- `loadBook(packId): Book`
+- `narrationUri(packId, sentenceId): Uri?`
+- `flipSound(packId): Uri?`
+- `coverImage(packId): Uri?`
+
+### 3.2 ReaderViewModel 输入变化
+
+- 初始化时由 `activePackId` 决定加载内容
+- `ProgressStore` 改为按 `packId` 命名空间隔离
+
+### 3.3 ActivePack 状态管理
+
+- `AppState` 持有 `activePackId`
+- `BookshelfScreen` 选择 pack 后更新 `activePackId`
+- `ReaderViewModel` 根据 `activePackId` 重建内容与缓存
+
+## 4. 导入流程（实现细节）
+
+- `PackImporter.import(zipUri)`：
+  - 解压到 `cache/pack_import/<tmpId>/`
+  - 校验 manifest + text/book.json
+  - 校验 ID 唯一性
+  - 统计音频缺失（可延迟扫描）
+  - 生成 PackIndex
+  - 原子移动到 `files/packs/<packId>/`
+  - 索引写入 `PackIndexStore`
+
+### 4.1 校验实现细节
+
+- 校验 `packId`：仅允许 `[a-zA-Z0-9._-]`，长度建议 <= 120
+- 校验 `formatVersion`：仅支持 1
+- 校验 `book.json`：解析成功且 ID 唯一
+- 可选校验 `sha256`：仅对 manifest 内声明的关键资源进行
+
+### 4.2 版本冲突策略落地
+
+- `packId` 相同且 `packVersion` 更高：允许覆盖，保留进度
+- `packVersion` 相同：提示已存在，返回 SKIPPED
+- `packVersion` 更低：默认拒绝，可通过设置允许覆盖
+
+### 4.3 原子落盘建议
+
+- 临时目录：`cache/pack_import/<tmpId>/`
+- 目标目录：`files/packs/<packId>/`
+- 使用 `renameTo` 或 `Files.move` 完成原子替换
+- 失败需清理临时目录与半成品
+
+## 5. builtin Pack 迁移
+
+- 首次启动 v2.0：
+  - 检测 `packs/builtin` 是否存在
+  - 若不存在：将 assets 复制为 builtin pack
+  - 写入 PackIndex
+  - 进度存入 `packId=builtin`
+
+### 5.1 builtin 复制策略
+
+- 复制 `assets/text`, `assets/audio`, `assets/images`, `assets/sound`
+- 生成 `manifest.json`
+- 生成 `PackIndex`
+
+## 6. 书架与阅读流程
+
+- `BookshelfScreen` 读取 PackIndex 列表
+- 选择书籍：
+  - `activePackId = packId`
+  - 打开 `ReaderScreen`
+- 返回书架：保持 `activePackId`，仅暂停朗读
+
+### 6.1 Bookshelf UI 状态绑定
+
+- 书架列表数据来自 `PackIndexStore.observe()`
+- 卡片 UI 根据 `hasNarration` 与 `missingNarrationSentenceCount` 渲染状态
+- 不可用 pack 卡片禁止进入阅读器
+
+## 7. 兼容与升级
+
+- App 名称改为“红宝匣”
+- `applicationId` 是否变更需单独决策（影响升级路径）
+- 旧版本进度可通过迁移工具写入 `packId=builtin`
+
+---
+
+## 8. 代码结构建议（包划分）
+
+```
+com.xuyutech.hongbaoshu
+  app/                  // AppState, Router, MainActivity
+  bookshelf/            // BookshelfScreen, BookshelfViewModel
+  pack/
+    import/             // PackImporter, validators
+    repository/         // PackRepository, PackIndexStore
+    model/              // PackManifest, PackIndex
+    loader/             // PackContentLoader
+  reader/               // 现有 Reader + PageEngine
+  audio/                // AudioManager
+  storage/              // ProgressStore, PageCacheStore
+```
+
+## 9. SAF 与文件权限
+
+- 使用系统文件选择器导入 Zip
+- 对外部 `Uri` 读取需 `ContentResolver.openInputStream`
+- 可选：持久化权限 `takePersistableUriPermission`
+
+## 10. 2.0 测试清单（新增）
+
+- PackImporter：格式错误/缺文件/重复导入/版本升级
+- PackIndexStore：新增/删除/重校验
+- builtin 迁移：首次启动写入索引与文件
+- Reader：切换 pack 后进度隔离
