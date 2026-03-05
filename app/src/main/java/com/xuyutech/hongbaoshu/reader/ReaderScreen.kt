@@ -317,11 +317,6 @@ fun ReaderScreen(
             buildPageConfig(fontSizeLevel)
         }
         
-        // 更新屏幕尺寸（用于缓存 key）
-        LaunchedEffect(contentWidthPx, contentHeightPx) {
-            viewModel.updateScreenSize(contentWidthPx, contentHeightPx)
-        }
-        
         val book = state.value.book
         val currentChapterIndex = state.value.currentChapterIndex
         val currentChapter = book?.chapters?.getOrNull(currentChapterIndex)
@@ -336,6 +331,8 @@ fun ReaderScreen(
                 contentWidthPx > 0 &&
                 contentHeightPx > 0
             ) {
+                // 同步更新尺寸，避免“先分页后清缓存”导致的卡加载竞态
+                viewModel.updateScreenSize(contentWidthPx, contentHeightPx)
                 pagesReady = false
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     viewModel.computeCurrentChapter(textMeasurer, ::buildPageConfig, fontSizeLevel)
@@ -346,6 +343,8 @@ fun ReaderScreen(
 
         LaunchedEffect(book, fontSizeLevel, contentWidthPx, contentHeightPx) {
             if (book != null && contentWidthPx > 0 && contentHeightPx > 0) {
+                // 与当前章节计算保持同一时序
+                viewModel.updateScreenSize(contentWidthPx, contentHeightPx)
                 globalPagesReady = false
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     viewModel.computeRemainingChapters(textMeasurer, ::buildPageConfig, fontSizeLevel)

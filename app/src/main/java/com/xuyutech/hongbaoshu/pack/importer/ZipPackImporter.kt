@@ -7,6 +7,7 @@ import com.xuyutech.hongbaoshu.pack.index.PackIndexStore
 import com.xuyutech.hongbaoshu.pack.model.PackIndex
 import com.xuyutech.hongbaoshu.pack.model.PackManifest
 import com.xuyutech.hongbaoshu.pack.storage.PackFileStore
+import com.xuyutech.hongbaoshu.pack.storage.PackInspector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -136,7 +137,9 @@ class ZipPackImporter(
 
             val coverExists = manifest.resources.cover?.path?.let { File(targetDir, it).exists() } ?: File(targetDir, "images/cover.png").exists()
             val flipExists = manifest.resources.flipSound?.path?.let { File(targetDir, it).exists() } ?: File(targetDir, "sound/page_flip.wav.ogg").exists()
-            val narrationExists = manifest.resources.narration?.dir?.let { File(targetDir, it).exists() } ?: File(targetDir, "audio/narration").exists()
+            val narrationDir = manifest.resources.narration?.dir?.let { File(targetDir, it) } ?: File(targetDir, "audio/narration")
+            val narrationExists = narrationDir.exists() && narrationDir.isDirectory && (narrationDir.listFiles()?.any { it.isFile } == true)
+            val missingNarrationSentenceCount = PackInspector.inspectMissingNarrationSentenceCount(targetDir) ?: 0
 
             packIndexStore.upsert(
                 PackIndex(
@@ -150,7 +153,7 @@ class ZipPackImporter(
                     hasCover = coverExists,
                     hasFlipSound = flipExists,
                     hasNarration = narrationExists,
-                    missingNarrationSentenceCount = 0,
+                    missingNarrationSentenceCount = missingNarrationSentenceCount,
                     isValid = true
                 )
             )

@@ -202,7 +202,7 @@ class AudioManagerImpl(
 
     private fun buildNarrationMediaItems(sentenceIds: List<String>): List<MediaItem> {
         return sentenceIds.mapNotNull { id ->
-            contentLoader.narrationUri(id)?.let { uri ->
+            getContentLoader().narrationUri(id)?.let { uri ->
                 MediaItem.Builder()
                     .setUri(uri)
                     .setMediaId(id)
@@ -293,7 +293,7 @@ class AudioManagerImpl(
 
     private fun ensureResourcesLoaded() {
         if (flipSoundId == 0) {
-            contentLoader.flipSound()?.let { uri ->
+            getContentLoader().flipSound()?.let { uri ->
                 val rawPath = uri.path ?: return@let
                 // file:///android_asset/path → strip prefix for AssetManager
                 val assetPath = rawPath.removePrefix("/android_asset/")
@@ -315,7 +315,7 @@ class AudioManagerImpl(
         // 向后寻找第一个有音频的句子
         var validIdx = -1
         for (i in idx until sentenceIds.size) {
-            if (contentLoader.narrationUri(sentenceIds[i]) != null) {
+            if (getContentLoader().narrationUri(sentenceIds[i]) != null) {
                 validIdx = i
                 break
             }
@@ -422,6 +422,16 @@ class AudioManagerImpl(
             }
         }
     }
+
+    @Volatile
+    private var contentLoaderRef: ContentLoader = contentLoader
+
+    override fun updateContentLoader(loader: ContentLoader) {
+        contentLoaderRef = loader
+        android.util.Log.d("AudioManagerImpl", "ContentLoader updated to: ${loader.javaClass.simpleName}")
+    }
+
+    private fun getContentLoader(): ContentLoader = contentLoaderRef
 
     override fun release() {
         narrationPlayer.release()

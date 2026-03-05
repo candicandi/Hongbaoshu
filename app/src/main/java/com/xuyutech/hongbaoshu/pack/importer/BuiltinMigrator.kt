@@ -22,28 +22,49 @@ class BuiltinMigrator(
     private val packIndexStore: PackIndexStore,
     private val packFileStore: PackFileStore
 ) {
-    suspend fun invoke() = withContext(Dispatchers.IO) {
+    suspend fun invoke(forceMigrate: Boolean = false) = withContext(Dispatchers.IO) {
         val packId = "builtin"
         val existing = packIndexStore.find(packId)
         val targetDir = packFileStore.packDir(packId)
+        val manifestFile = File(targetDir, "manifest.json")
 
-        // 若已迁移且有效，或者目录存在且清单存在，忽略
-        if (existing != null && targetDir.exists() && File(targetDir, "manifest.json").exists()) {
+        // 若已迁移且有效，或者目录存在且清单存在，忽略（除非强制迁移）
+        if (!forceMigrate && existing != null && targetDir.exists() && manifestFile.exists()) {
+            android.util.Log.d("BuiltinMigrator", "Migration skipped, already exists")
             return@withContext
         }
 
+        android.util.Log.d("BuiltinMigrator", "Starting migration, force=$forceMigrate, targetDir=$targetDir")
+        
+        // 清理旧数据（如果存在）
+        if (targetDir.exists()) {
+            targetDir.deleteRecursively()
+        }
+        
         targetDir.mkdirs()
 
-        // 复制 asserts 到 pack 目录
-        copyAssetDir("text", File(targetDir, "text"))
-        copyAssetDir("audio", File(targetDir, "audio"))
-        copyAssetDir("images", File(targetDir, "images"))
-        copyAssetDir("sound", File(targetDir, "sound"))
+        // 复制 assets 到 pack 目录（可选资源不存在时降级，不中断迁移）
+        copyAssetDirIfExists("text", File(targetDir, "text"), required = true)
+        copyAssetDirIfExists("audio", File(targetDir, "audio"), required = false)
+        copyAssetDirIfExists("images", File(targetDir, "images"), required = false)
+        copyAssetDirIfExists("sound", File(targetDir, "sound"), required = false)
 
         // 使用 ContentLoader 读取信息
         val bookResult = ContentLoaderImpl().loadBook(context)
         val book = bookResult.book
-        val missingCount = bookResult.missingSentenceAudioIds.size
+        val missingIds = bookResult.missingSentenceAudioIds.toList().sorted()
+        val missingCount = missingIds.size
+        if (missingIds.isNotEmpty()) {
+            android.util.Log.w(
+                "BuiltinMigrator",
+                "Builtin narration missing ids(count=$missingCount): ${missingIds.joinToString(limit = 10)}"
+            )
+        }
+
+        val hasCover = File(targetDir, "images/cover.png").exists()
+        val hasFlipSound = File(targetDir, "sound/page_flip.wav.ogg").exists()
+        val hasNarration = File(targetDir, "audio/narration")
+            .let { it.exists() && it.isDirectory && (it.listFiles()?.any { f -> f.isFile } == true) }
 
         val manifest = PackManifest(
             formatVersion = 1,
@@ -55,28 +76,17 @@ class BuiltinMigrator(
                 edition = book.edition
             ),
             resources = PackResources(
-                text = ResourceItem(path = "text/mao_quotes_1966.json"), // FIXME: Need to verify if this is the correct builtin text filename or standard book.json
-                cover = ResourceItem(path = "images/cover.png"),
-                flipSound = ResourceItem(path = "sound/page_flip.wav.ogg"),
-                narration = NarrationResource(dir = "audio/narration", codec = "mp3")
+                text = ResourceItem(path = "text/text.json"),
+                cover = if (hasCover) ResourceItem(path = "images/cover.png") else null,
+                flipSound = if (hasFlipSound) ResourceItem(path = "sound/page_flip.wav.ogg") else null,
+                narration = if (hasNarration) NarrationResource(dir = "audio/narration", codec = "mp3") else null
             )
         )
-        // Check actual filename from assets/text
-        val textDir = File(targetDir, "text")
-        val jsonFile = textDir.listFiles()?.firstOrNull { it.extension == "json" }
-        if (jsonFile != null && jsonFile.name != "book.json") {
-            // Rename to standard book.json for consistency in 2.0
-            jsonFile.renameTo(File(textDir, "book.json"))
-        }
 
         // Generate manifest.json
         val json = Json { prettyPrint = true }
         File(targetDir, "manifest.json").writeText(
-            json.encodeToString(PackManifest.serializer(), manifest.copy(
-                resources = manifest.resources.copy(
-                    text = ResourceItem(path = "text/book.json")
-                )
-            ))
+            json.encodeToString(PackManifest.serializer(), manifest)
         )
 
         val index = PackIndex(
@@ -87,31 +97,42 @@ class BuiltinMigrator(
             bookAuthor = book.author,
             bookEdition = book.edition,
             importedAt = System.currentTimeMillis(),
-            hasCover = true,
-            hasFlipSound = true,
-            hasNarration = true,
+            hasCover = hasCover,
+            hasFlipSound = hasFlipSound,
+            hasNarration = hasNarration,
             missingNarrationSentenceCount = missingCount,
             isValid = true
         )
         packIndexStore.upsert(index)
     }
 
-    private fun copyAssetDir(srcPath: String, destDir: File) {
+    private fun copyAssetDirIfExists(srcPath: String, destDir: File, required: Boolean) {
         val am = context.assets
-        val list = am.list(srcPath)
-        if (list.isNullOrEmpty()) {
-            // It's a file
-            destDir.parentFile?.mkdirs()
-            am.open(srcPath).use { input ->
-                FileOutputStream(destDir).use { output ->
-                    input.copyTo(output)
+        val list = runCatching { am.list(srcPath) }.getOrNull()
+
+        if (list == null) {
+            if (required) error("Required asset path missing: $srcPath")
+            android.util.Log.w("BuiltinMigrator", "Optional asset path missing: $srcPath")
+            return
+        }
+
+        if (list.isEmpty()) {
+            val copied = runCatching {
+                destDir.parentFile?.mkdirs()
+                am.open(srcPath).use { input ->
+                    FileOutputStream(destDir).use { output ->
+                        input.copyTo(output)
+                    }
                 }
+            }.isSuccess
+            if (!copied) {
+                if (required) error("Required asset file missing: $srcPath")
+                android.util.Log.w("BuiltinMigrator", "Optional asset file missing: $srcPath")
             }
         } else {
-            // It's a directory
             destDir.mkdirs()
             for (child in list) {
-                copyAssetDir("$srcPath/$child", File(destDir, child))
+                copyAssetDirIfExists("$srcPath/$child", File(destDir, child), required = required)
             }
         }
     }

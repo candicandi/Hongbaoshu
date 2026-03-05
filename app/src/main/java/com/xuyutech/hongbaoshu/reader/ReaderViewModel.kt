@@ -136,6 +136,10 @@ class ReaderViewModel(
     // 上一个播放完成的句子ID(用于防止跨页重复)
     private var lastCompletedSentenceId: String? = null
     private var pendingNarrationRestartAfterSentenceUpdate: Boolean = false
+    // 朗读失败自动翻页防重入与熔断，避免递归风暴导致 ANR
+    private var missingAudioAutoAdvanceInProgress: Boolean = false
+    private var lastMissingAudioSentenceId: String? = null
+    private var missingAudioFailureStreak: Int = 0
 
 
     init {
@@ -503,6 +507,7 @@ class ReaderViewModel(
     fun refresh() = load()
 
     private fun load() {
+        android.util.Log.i("ReaderViewModel", "load start: packId=$packId")
         _state.value = ReaderState(isLoading = true)
         viewModelScope.launch {
             val result = runCatching {
@@ -513,6 +518,7 @@ class ReaderViewModel(
                 }
             }
             result.onSuccess { (bookResult, saved) ->
+                android.util.Log.i("ReaderViewModel", "load success: packId=$packId, title=${bookResult.book.title}, missingAudio=${bookResult.missingSentenceAudioIds.size}")
                 val cappedChapterIndex =
                     saved.chapterIndex.coerceIn(0, bookResult.book.chapters.lastIndex)
                 _state.value = ReaderState(
@@ -526,6 +532,7 @@ class ReaderViewModel(
                 )
                 restoreAudioState(saved)
             }.onFailure { e ->
+                android.util.Log.e("ReaderViewModel", "load failed: packId=$packId", e)
                 _state.value = ReaderState(
                     isLoading = false,
                     error = e.message ?: "加载失败"
@@ -592,26 +599,45 @@ class ReaderViewModel(
 
     private fun playSentenceInternal(sentenceId: String, overrideSentenceIds: List<String>?) {
         _state.value = _state.value?.copy(lastPlayedSentenceId = sentenceId)
-        android.util.Log.d("ReaderViewModel", "playSentence called: $sentenceId")
-        
+
         val currentPageSentenceIds = _state.value?.currentPageSentenceIds.orEmpty()
         val request = resolveNarrationPlayRequest(
             requestedSentenceId = sentenceId,
             currentPageSentenceIds = currentPageSentenceIds,
             overrideSentenceIds = overrideSentenceIds
         )
-        
+
         val success = audioManager.playNarrationList(request.sentenceIds, request.startIndex)
-        android.util.Log.d("ReaderViewModel", "playSentence result: $success")
         if (success) {
+            lastMissingAudioSentenceId = null
+            missingAudioFailureStreak = 0
             persistState(narrationSentenceId = sentenceId)
         } else {
             showToast("音频缺失，已跳过")
+            // 若连续失败集中在同一句，触发熔断，防止递归导致卡死
+            if (lastMissingAudioSentenceId == sentenceId) {
+                missingAudioFailureStreak += 1
+            } else {
+                lastMissingAudioSentenceId = sentenceId
+                missingAudioFailureStreak = 1
+            }
+
+            if (missingAudioFailureStreak >= 3) {
+                toggleNarration(false)
+                showToast("朗读资源不可用，已停止自动朗读")
+                return
+            }
+
             // 如果处于连续朗读状态，自动触发翻页跳过本页剩余部分
-            if (narrationEnabled && !isManualPageTurn) {
+            if (narrationEnabled && !isManualPageTurn && !missingAudioAutoAdvanceInProgress) {
                 val lastId = request.sentenceIds.lastOrNull() ?: sentenceId
+                missingAudioAutoAdvanceInProgress = true
                 viewModelScope.launch {
-                    handlePageCompleted(lastId)
+                    try {
+                        handlePageCompleted(lastId)
+                    } finally {
+                        missingAudioAutoAdvanceInProgress = false
+                    }
                 }
             }
         }

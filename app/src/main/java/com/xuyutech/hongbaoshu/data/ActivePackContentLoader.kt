@@ -8,15 +8,29 @@ class ActivePackContentLoader(
     private val packLoaderProvider: (String) -> ContentLoader
 ) : ContentLoader {
     private var activePackId: String = "builtin"
+    private val packLoaders: MutableMap<String, ContentLoader> = mutableMapOf()
 
     fun setActivePackId(packId: String) {
         activePackId = packId
+        android.util.Log.d("ActivePackContentLoader", "activePackId=$packId")
     }
 
     fun currentPackId(): String = activePackId
 
+    private fun loaderFor(packId: String): ContentLoader {
+        return if (packId == "builtin") {
+            builtinLoader
+        } else {
+            synchronized(packLoaders) {
+                packLoaders.getOrPut(packId) { packLoaderProvider(packId) }
+            }
+        }
+    }
+
     private fun currentLoader(): ContentLoader {
-        return packLoaderProvider(activePackId)
+        val loader = loaderFor(activePackId)
+        android.util.Log.d("ActivePackContentLoader", "currentLoader packId=$activePackId loader=${loader.javaClass.simpleName}")
+        return loader
     }
 
     override suspend fun loadBook(context: Context): BookLoadResult = currentLoader().loadBook(context)
